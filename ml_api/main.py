@@ -7,7 +7,7 @@ import pandas as pd
 app = FastAPI(title="Kidney Stone Prediction API")
 
 # 2. Load the trained model
-model = joblib.load("models/kidney_stone_model.joblib")
+model = joblib.load("models/kidney_stone_model_extended.joblib")
 
 # 3. Define the input data structure using Pydantic
 class UrineData(BaseModel):
