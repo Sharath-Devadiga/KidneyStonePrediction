@@ -66,12 +66,12 @@ const kidneyFacts = [
 
 export default function PredictPage() {
   const [form, setForm] = useState<UrineData>({
-    gravity: null,
-    ph: null,
-    osmo: null,
-    cond: null,
-    urea: null,
-    calc: null,
+    gravity: "" as any,
+    ph: "" as any,
+    osmo: "" as any,
+    cond: "" as any,
+    urea: "" as any,
+    calc: "" as any,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +80,7 @@ export default function PredictPage() {
   const [factIdx, setFactIdx] = useState(0);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setForm({ ...form, [e.target.name]: Number(e.target.value) });
+    setForm({ ...form, [e.target.name]: e.target.value === "" ? "" : Number(e.target.value) });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -90,10 +90,28 @@ export default function PredictPage() {
     setResult(null);
     
     try {
-      const res = await predictKidneyStone(form);
+      // Convert all form values to numbers before sending
+      const numericData: UrineData = {
+        gravity: Number(form.gravity),
+        ph: Number(form.ph),
+        osmo: Number(form.osmo),
+        cond: Number(form.cond),
+        urea: Number(form.urea),
+        calc: Number(form.calc),
+      };
+      
+      // Validate that all values are valid numbers
+      const hasInvalidData = Object.values(numericData).some(val => val === null || isNaN(val as number));
+      if (hasInvalidData) {
+        setError("Please enter valid numbers for all fields");
+        setLoading(false);
+        return;
+      }
+      
+      const res = await predictKidneyStone(numericData);
       setResult(res);
       const entry: HistoryEntry = { 
-        form: { ...form }, 
+        form: numericData, 
         result: res, 
         time: new Date().toLocaleString() 
       };
@@ -106,9 +124,26 @@ export default function PredictPage() {
   };
 
   const handleReset = () => {
-    setForm({ gravity: null, ph: null, osmo: null, cond: null, urea: null, calc: null });
+    setForm({ gravity: "" as any, ph: "" as any, osmo: "" as any, cond: "" as any, urea: "" as any, calc: "" as any });
     setResult(null);
     setError(null);
+  };
+
+  const handleResetUrineImage = () => {
+    setSelectedImage(null);
+    setForm({ gravity: "" as any, ph: "" as any, osmo: "" as any, cond: "" as any, urea: "" as any, calc: "" as any });
+    setResult(null);
+    setError(null);
+    setImageLoading(false);
+    setUrineStripResult(null);
+  };
+
+  const handleResetCtScan = () => {
+    setCtImage(null);
+    setCtPreview(null);
+    setCtResult(null);
+    setError(null);
+    setCtLoading(false);
   };
 
   const exportResults = () => {
@@ -132,6 +167,7 @@ export default function PredictPage() {
   const [imageLoading, setImageLoading] = useState(false);
 
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [urineStripResult, setUrineStripResult] = useState<any | null>(null);
   
   const handleImageUpload = async (file: File) => {
     setImageLoading(true);
@@ -156,16 +192,44 @@ export default function PredictPage() {
     
     setImageLoading(true);
     setError(null);
+    setResult(null);
+    setUrineStripResult(null);
     
     try {
-      const response = await axios.post("/api/predict/image", 
-        { image: selectedImage },
-      ); 
+      // Convert base64 to blob
+      const response = await fetch(selectedImage);
+      const blob = await response.blob();
+      const file = new File([blob], "urine-strip.jpg", { type: "image/jpeg" });
+      
+      const formData = new FormData();
+      formData.append("file", file);
+      
+      const apiResponse = await axios.post("/api/predict/urine-strip", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data"
+        }
+      });
 
-      const data = response.data;
-      setForm(data);
-    } catch (err) {
-      setError("Failed to analyze image. Please try manual entry.");
+      const data = apiResponse.data;
+      
+      if (data.success && data.parameters && data.prediction) {
+        // All parameters extracted and prediction made
+        setUrineStripResult(data);
+        setForm(data.parameters);
+        setError(null);
+      } else if (data.parameters) {
+        // Some parameters extracted but not all
+        setUrineStripResult(data);
+        setForm(data.parameters);
+        setError(data.message);
+      } else {
+        // No parameters extracted
+        setError(data.message || "Could not extract parameters from image. Please use manual entry.");
+        setUrineStripResult(null);
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.response?.data?.detail || "Failed to analyze image. Please try manual entry.");
+      setUrineStripResult(null);
     } finally {
       setImageLoading(false);
     }
@@ -368,6 +432,7 @@ export default function PredictPage() {
                               onChange={handleChange}
                               step="any"
                               required
+                              suppressHydrationWarning
                               className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none"
                               placeholder={`Enter ${parameterInfo[key].label.toLowerCase()}`}
                             />
@@ -382,6 +447,7 @@ export default function PredictPage() {
                           type="submit" 
                           className="flex-1 py-3.5 text-base font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed" 
                           disabled={loading}
+                          suppressHydrationWarning
                         >
                           {loading ? (
                             <span className="flex items-center gap-3 justify-center">
@@ -405,74 +471,278 @@ export default function PredictPage() {
                           type="button" 
                           className="px-8 py-3.5 border-2 border-slate-300 rounded-lg hover:bg-slate-50 transition-all font-medium text-slate-700" 
                           onClick={handleReset}
+                          suppressHydrationWarning
                         >
                           Reset
                         </motion.button>
                       </div>
                     </form>
+                    
+                    {/* Manual Entry Results - Only show in this tab */}
+                    <AnimatePresence mode="wait">
+                      {result !== null && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                          transition={{ type: "spring", stiffness: 200 }}
+                          className={`p-8 rounded-xl shadow-xl ${
+                            result.prediction === 1 
+                              ? "bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200" 
+                              : "bg-gradient-to-br from-green-50 to-emerald-100 border-2 border-green-200"
+                          }`}
+                        >
+                          <div className="flex flex-col items-center text-center">
+                            <motion.div 
+                              initial={{ scale: 0 }}
+                              animate={{ scale: 1 }}
+                              transition={{ type: "spring", stiffness: 200, delay: 0.1 }}
+                              className="text-6xl mb-4"
+                            >
+                              {result.prediction === 1 ? "⚠️" : "✅"}
+                            </motion.div>
+                            <h3 className={`text-3xl font-bold mb-3 ${
+                              result.prediction === 1 ? "text-red-700" : "text-green-700"
+                            }`}>
+                              {result.risk_level}
+                            </h3>
+                            {result.confidence && (
+                              <p className="text-base text-slate-600 mb-6">
+                                Confidence: {(result.confidence * 100).toFixed(1)}%
+                              </p>
+                            )}
+                            
+                            <div className="w-full mt-6 p-6 bg-white/60 backdrop-blur-sm rounded-xl shadow-inner text-left">
+                              <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                <span className="text-xl">📋</span>
+                                <span>Recommendations</span>
+                              </h4>
+                              <ul className="space-y-3">
+                                {result.recommendations.map((rec, idx) => (
+                                  <motion.li 
+                                    key={idx}
+                                    initial={{ opacity: 0, x: -10 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.2 + idx * 0.1 }}
+                                    className="text-sm text-slate-700 flex items-start gap-3"
+                                  >
+                                    <span className="text-blue-600 font-bold mt-0.5">•</span>
+                                    <span className="flex-1">{rec}</span>
+                                  </motion.li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                    
+                    {/* Recent Predictions - Only show in Manual Entry tab */}
+                    {history.length > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.3 }}
+                        className="mt-8 bg-slate-50/50 rounded-xl border border-slate-200/50 p-6"
+                      >
+                        <div className="flex items-center justify-between mb-4">
+                          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                            <span className="text-xl">📜</span>
+                            Recent Predictions ({history.length})
+                          </h3>
+                          <div className="flex gap-2">
+                            <button 
+                              className="text-sm text-green-600 hover:text-green-700 font-medium px-3 py-1 border border-green-300 rounded-lg hover:bg-green-50 transition-colors" 
+                              onClick={exportResults}
+                              suppressHydrationWarning
+                            >
+                              📥 Export
+                            </button>
+                            <button 
+                              className="text-sm text-red-600 hover:text-red-700 font-medium px-3 py-1 border border-red-300 rounded-lg hover:bg-red-50 transition-colors" 
+                              onClick={() => setHistory([])}
+                              suppressHydrationWarning
+                            >
+                              🗑️ Clear
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-3">
+                          {history.map((h, i) => (
+                            <motion.div
+                              key={i}
+                              initial={{ opacity: 0, x: -20 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: i * 0.05 }}
+                              className="bg-white rounded-lg p-4 border border-slate-200 hover:shadow-md transition-shadow"
+                            >
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs text-slate-500">{h.time}</span>
+                                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium ${
+                                  h.result.prediction === 1 
+                                    ? "bg-red-100 text-red-700" 
+                                    : "bg-green-100 text-green-700"
+                                }`}>
+                                  {h.result.prediction === 1 ? "🚨 High Risk" : "✅ Low Risk"}
+                                  {h.result.confidence && ` (${(h.result.confidence * 100).toFixed(0)}%)`}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2 text-xs">
+                                {(Object.entries(h.form) as [keyof UrineData, number][]).map(([k, v]) => (
+                                  <div key={k} className="bg-slate-50 px-2 py-1 rounded">
+                                    <span className="font-medium text-slate-600">{parameterInfo[k].label}:</span>
+                                    <span className="ml-1 text-slate-800">{v}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </motion.div>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
                   </Tabs.Content>
 
                   <Tabs.Content value="image" className="space-y-6">
                     <div className="space-y-4">
-                      <ImageUpload onImageUpload={handleImageUpload} isLoading={imageLoading} />
-                      {selectedImage && (
-                        <div className="mt-4 flex justify-center">
-                          <motion.button
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={handleAnalyzeImage}
-                            className="py-2.5 px-6 text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                            disabled={imageLoading}
+                      <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                        <p className="text-sm text-blue-800">
+                          <strong>📷 Urine Test Strip Analysis:</strong> Upload an image of your urine test strip. Our AI will extract the parameters and provide a prediction.
+                        </p>
+                      </div>
+                      
+                      {!urineStripResult ? (
+                        <>
+                          <ImageUpload onImageUpload={handleImageUpload} isLoading={imageLoading} />
+                          
+                          {selectedImage && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 20 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="mt-6 flex justify-center gap-4"
+                            >
+                              <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={handleAnalyzeImage}
+                                className="py-3 px-8 text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={imageLoading}
+                                suppressHydrationWarning
+                              >
+                                {imageLoading ? (
+                                  <span className="flex items-center gap-3 justify-center">
+                                    <motion.span 
+                                      animate={{ rotate: 360 }}
+                                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                                      className="inline-block w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
+                                    />
+                                    <span>Analyzing Strip...</span>
+                                  </span>
+                                ) : (
+                                  <span className="flex items-center gap-2 justify-center">
+                                    <span>🔬</span>
+                                    <span>Analyze Strip Image</span>
+                                  </span>
+                                )}
+                              </motion.button>
+                              
+                              <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={handleResetUrineImage}
+                                className="py-3 px-6 text-sm font-semibold border-2 border-slate-300 rounded-lg hover:bg-slate-50 transition-all text-slate-700"
+                                suppressHydrationWarning
+                              >
+                                <span className="flex items-center gap-2">
+                                  <span>🔄</span>
+                                  <span>Cancel</span>
+                                </span>
+                              </motion.button>
+                            </motion.div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {/* Results Display - Simple like Manual Entry */}
+                          <motion.div
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="space-y-6"
                           >
-                            {imageLoading ? (
-                              <span className="flex items-center gap-3 justify-center">
-                                <motion.span 
-                                  animate={{ rotate: 360 }}
-                                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                                  className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
-                                />
-                                <span>Analyzing Image...</span>
-                              </span>
-                            ) : (
-                              <span className="flex items-center gap-2 justify-center">
-                                <span>🔬</span>
-                                <span>Analyze Image</span>
-                              </span>
+                            {/* Prediction Result */}
+                            {urineStripResult.success && urineStripResult.prediction && (
+                              <>
+                                <motion.div
+                                  initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                                  transition={{ type: "spring", stiffness: 200 }}
+                                  className={`p-8 rounded-xl shadow-xl ${
+                                    urineStripResult.prediction.prediction === 1 
+                                      ? "bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200" 
+                                      : "bg-gradient-to-br from-green-50 to-emerald-100 border-2 border-green-200"
+                                  }`}
+                                >
+                                  <div className="flex flex-col items-center text-center">
+                                    <motion.div 
+                                      initial={{ scale: 0 }}
+                                      animate={{ scale: 1 }}
+                                      transition={{ type: "spring", stiffness: 200, delay: 0.1 }}
+                                      className="text-6xl mb-4"
+                                    >
+                                      {urineStripResult.prediction.prediction === 1 ? "⚠️" : "✅"}
+                                    </motion.div>
+                                    <h3 className={`text-3xl font-bold mb-3 ${
+                                      urineStripResult.prediction.prediction === 1 ? "text-red-700" : "text-green-700"
+                                    }`}>
+                                      {urineStripResult.prediction.risk_level}
+                                    </h3>
+                                    {urineStripResult.prediction.confidence && (
+                                      <p className="text-base text-slate-600 mb-6">
+                                        Confidence: {(urineStripResult.prediction.confidence * 100).toFixed(1)}%
+                                      </p>
+                                    )}
+                                    
+                                    <div className="w-full mt-6 p-6 bg-white/60 backdrop-blur-sm rounded-xl shadow-inner text-left">
+                                      <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                        <span className="text-xl">📋</span>
+                                        <span>Recommendations</span>
+                                      </h4>
+                                      <ul className="space-y-3">
+                                        {urineStripResult.prediction.recommendations.map((rec: string, idx: number) => (
+                                          <motion.li 
+                                            key={idx}
+                                            initial={{ opacity: 0, x: -10 }}
+                                            animate={{ opacity: 1, x: 0 }}
+                                            transition={{ delay: 0.2 + idx * 0.1 }}
+                                            className="text-sm text-slate-700 flex items-start gap-3"
+                                          >
+                                            <span className="text-blue-600 font-bold mt-0.5">•</span>
+                                            <span className="flex-1">{rec}</span>
+                                          </motion.li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  </div>
+                                </motion.div>
+                                
+                                {/* Test Another Button - Only show when there are results */}
+                                <div className="flex justify-center pt-4">
+                                  <motion.button
+                                    whileHover={{ scale: 1.02 }}
+                                    whileTap={{ scale: 0.98 }}
+                                    onClick={handleResetUrineImage}
+                                    className="py-3 px-8 text-sm font-semibold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all"
+                                    suppressHydrationWarning
+                                  >
+                                    <span className="flex items-center gap-2">
+                                      <span>🔄</span>
+                                      <span>Test Another Strip</span>
+                                    </span>
+                                  </motion.button>
+                                </div>
+                              </>
                             )}
-                          </motion.button>
-                        </div>
-                      )}
-                      {Object.entries(form).some(([, value]) => value !== null) && (
-                        <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-                          <h3 className="text-sm font-semibold text-blue-700 mb-2">Detected Parameters:</h3>
-                          <div className="grid sm:grid-cols-2 gap-4">
-                            {Object.entries(form).map(([key, value]) => (
-                              <div key={key} className="bg-white p-2 rounded shadow-sm">
-                                <span className="text-xs text-slate-600">{parameterInfo[key as keyof UrineData].label}:</span>
-                                <span className="ml-2 text-sm font-medium">{value ?? "Not detected"}</span>
-                              </div>
-                            ))}
-                          </div>
-                          <div className="mt-4 flex gap-4">
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={handleSubmit}
-                              className="flex-1 py-2.5 text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                              disabled={loading}
-                            >
-                              Predict with Detected Values
-                            </motion.button>
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={handleReset}
-                              className="px-4 py-2.5 text-sm border-2 border-slate-300 rounded-lg hover:bg-slate-50 transition-all font-medium text-slate-700"
-                            >
-                              Reset
-                            </motion.button>
-                          </div>
-                        </div>
+                          </motion.div>
+                        </>
                       )}
                     </div>
                   </Tabs.Content>
@@ -481,102 +751,165 @@ export default function PredictPage() {
                     <div className="space-y-4">
                       <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
                         <p className="text-sm text-blue-800">
-                          <strong>🏥 CT/X-Ray Scan Analysis:</strong> Upload a kidney CT scan or X-ray image for AI-powered stone detection.
+                          <strong>🏥 CT/X-Ray Scan Analysis:</strong> Upload a kidney CT scan or KUB X-ray image for AI-powered stone detection.
                         </p>
                       </div>
                       
-                      <ImageUpload onImageUpload={handleCtImageUpload} isLoading={ctLoading} />
-                      
-                      {ctPreview && (
-                        <div className="mt-4 flex justify-center">
-                          <motion.button
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={handleCtImagePredict}
-                            className="py-3 px-8 text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                            disabled={ctLoading}
+                      {!ctResult ? (
+                        <>
+                          <ImageUpload onImageUpload={handleCtImageUpload} isLoading={ctLoading} />
+                          
+                          {ctPreview && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 20 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="mt-6 flex justify-center gap-4"
+                            >
+                              <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={handleCtImagePredict}
+                                className="py-3 px-8 text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={ctLoading}
+                                suppressHydrationWarning
+                              >
+                                {ctLoading ? (
+                                  <span className="flex items-center gap-3 justify-center">
+                                    <motion.span 
+                                      animate={{ rotate: 360 }}
+                                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                                      className="inline-block w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
+                                    />
+                                    <span>Analyzing Scan...</span>
+                                  </span>
+                                ) : (
+                                  <span className="flex items-center gap-2 justify-center">
+                                    <span>🔬</span>
+                                    <span>Analyze CT/X-Ray Scan</span>
+                                  </span>
+                                )}
+                              </motion.button>
+                              
+                              <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={handleResetCtScan}
+                                className="py-3 px-6 text-sm font-semibold border-2 border-slate-300 rounded-lg hover:bg-slate-50 transition-all text-slate-700"
+                                suppressHydrationWarning
+                              >
+                                <span className="flex items-center gap-2">
+                                  <span>🔄</span>
+                                  <span>Cancel</span>
+                                </span>
+                              </motion.button>
+                            </motion.div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {/* Result Display */}
+                          <motion.div
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="space-y-6"
                           >
-                            {ctLoading ? (
-                              <span className="flex items-center gap-3 justify-center">
-                                <motion.span 
-                                  animate={{ rotate: 360 }}
-                                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                                  className="inline-block w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
-                                />
-                                <span>Analyzing Scan...</span>
-                              </span>
-                            ) : (
-                              <span className="flex items-center gap-2 justify-center">
-                                <span>🔬</span>
-                                <span>Analyze CT/X-Ray Image</span>
-                              </span>
-                            )}
-                          </motion.button>
-                        </div>
-                      )}
-                      
-                      {ctResult && (
-                        <motion.div
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className="mt-6 p-6 bg-white border-2 border-blue-200 rounded-xl shadow-lg"
-                        >
-                          <div className="flex items-center gap-3 mb-4">
-                            <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${
-                              ctResult.classification === 'Stone' 
-                                ? 'bg-red-100' 
-                                : 'bg-green-100'
-                            }`}>
-                              {ctResult.classification === 'Stone' ? '🔴' : '✅'}
+                            {/* Results Card with Image */}
+                            <div className="bg-white border-2 border-blue-200 rounded-2xl shadow-2xl overflow-hidden">
+                              {/* Image Preview at Top */}
+                              <div className="bg-gradient-to-br from-slate-50 to-blue-50 p-8 border-b-2 border-blue-100">
+                                <div className="flex justify-center">
+                                  <img 
+                                    src={ctPreview || ""} 
+                                    alt="Analyzed CT/X-ray scan" 
+                                    className="max-w-lg rounded-xl border-2 border-white shadow-2xl"
+                                  />
+                                </div>
+                              </div>
+                              
+                              {/* Results Content */}
+                              <div className="p-8">
+                                <div className="flex items-center gap-4 mb-6">
+                                  <div className={`w-16 h-16 rounded-full flex items-center justify-center text-3xl shadow-lg ${
+                                    ctResult.classification === 'Stone' 
+                                      ? 'bg-gradient-to-br from-red-100 to-red-200' 
+                                      : 'bg-gradient-to-br from-green-100 to-green-200'
+                                  }`}>
+                                    {ctResult.classification === 'Stone' ? '🔴' : '✅'}
+                                  </div>
+                                  <div>
+                                    <h3 className="text-2xl font-bold text-slate-800">
+                                      {ctResult.classification === 'Stone' ? 'Kidney Stone Detected' : 'No Stone Detected'}
+                                    </h3>
+                                    <p className="text-base text-slate-600 mt-1">
+                                      Confidence: {(ctResult.confidence * 100).toFixed(1)}%
+                                    </p>
+                                  </div>
+                                </div>
+                                
+                                <div className="grid grid-cols-2 gap-4 mb-6">
+                                  <div className="p-4 bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-green-200">
+                                    <p className="text-xs text-slate-600 mb-2 font-medium">Probability Normal</p>
+                                    <p className="text-2xl font-bold text-green-600">
+                                      {(ctResult.probability_normal * 100).toFixed(1)}%
+                                    </p>
+                                  </div>
+                                  <div className="p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-200">
+                                    <p className="text-xs text-slate-600 mb-2 font-medium">Probability Stone</p>
+                                    <p className="text-2xl font-bold text-red-600">
+                                      {(ctResult.probability_stone * 100).toFixed(1)}%
+                                    </p>
+                                  </div>
+                                </div>
+                                
+                                <div className="border-t-2 border-slate-200 pt-6 mb-6">
+                                  <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2 text-lg">
+                                    <span className="text-xl">📋</span>
+                                    <span>Recommendations</span>
+                                  </h4>
+                                  <ul className="space-y-3">
+                                    {ctResult.recommendations.map((rec: string, idx: number) => (
+                                      <motion.li
+                                        key={idx}
+                                        initial={{ opacity: 0, x: -10 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        transition={{ delay: idx * 0.1 }}
+                                        className="flex items-start gap-3 text-sm text-slate-700"
+                                      >
+                                        <span className="text-blue-600 font-bold mt-0.5">•</span>
+                                        <span className="flex-1">{rec}</span>
+                                      </motion.li>
+                                    ))}
+                                  </ul>
+                                </div>
+                                
+                                <div className="pt-6 border-t border-slate-200">
+                                  <div className="flex items-center justify-between text-xs text-slate-500">
+                                    <div>
+                                      <p className="font-medium">Model: {ctResult.model_type}</p>
+                                      <p>Analyzed: {new Date(ctResult.timestamp).toLocaleString()}</p>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
-                            <div>
-                              <h3 className="text-xl font-bold text-slate-800">
-                                {ctResult.classification === 'Stone' ? 'Kidney Stone Detected' : 'No Stone Detected'}
-                              </h3>
-                              <p className="text-sm text-slate-600">
-                                Confidence: {(ctResult.confidence * 100).toFixed(1)}%
-                              </p>
+                            
+                            {/* Test Another Button */}
+                            <div className="flex justify-center pt-4">
+                              <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={handleResetCtScan}
+                                className="py-3 px-8 text-sm font-semibold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all"
+                                suppressHydrationWarning
+                              >
+                                <span className="flex items-center gap-2">
+                                  <span>🔄</span>
+                                  <span>Test Another Scan</span>
+                                </span>
+                              </motion.button>
                             </div>
-                          </div>
-                          
-                          <div className="grid grid-cols-2 gap-4 mb-4">
-                            <div className="p-3 bg-slate-50 rounded-lg">
-                              <p className="text-xs text-slate-600 mb-1">Probability Normal</p>
-                              <p className="text-lg font-semibold text-green-600">
-                                {(ctResult.probability_normal * 100).toFixed(1)}%
-                              </p>
-                            </div>
-                            <div className="p-3 bg-slate-50 rounded-lg">
-                              <p className="text-xs text-slate-600 mb-1">Probability Stone</p>
-                              <p className="text-lg font-semibold text-red-600">
-                                {(ctResult.probability_stone * 100).toFixed(1)}%
-                              </p>
-                            </div>
-                          </div>
-                          
-                          <div className="border-t border-slate-200 pt-4">
-                            <h4 className="font-semibold text-slate-800 mb-3">📋 Recommendations:</h4>
-                            <ul className="space-y-2">
-                              {ctResult.recommendations.map((rec: string, idx: number) => (
-                                <motion.li
-                                  key={idx}
-                                  initial={{ opacity: 0, x: -10 }}
-                                  animate={{ opacity: 1, x: 0 }}
-                                  transition={{ delay: idx * 0.1 }}
-                                  className="flex items-start gap-2 text-sm text-slate-700"
-                                >
-                                  <span className="text-blue-500 mt-0.5">•</span>
-                                  <span>{rec}</span>
-                                </motion.li>
-                              ))}
-                            </ul>
-                          </div>
-                          
-                          <div className="mt-4 text-xs text-slate-500">
-                            <p>Model: {ctResult.model_type}</p>
-                            <p>Analyzed: {new Date(ctResult.timestamp).toLocaleString()}</p>
-                          </div>
-                        </motion.div>
+                          </motion.div>
+                        </>
                       )}
                     </div>
                   </Tabs.Content>
@@ -596,121 +929,7 @@ export default function PredictPage() {
                       </div>
                     </motion.div>
                   )}
-                  
-                  {result !== null && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                      transition={{ type: "spring", stiffness: 200 }}
-                      className={`mt-6 p-6 rounded-xl shadow-lg ${
-                        result.prediction === 1 
-                          ? "bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200" 
-                          : "bg-gradient-to-br from-green-50 to-emerald-100 border-2 border-green-200"
-                      }`}
-                    >
-                      <div className="flex flex-col items-center text-center">
-                        <motion.div 
-                          initial={{ scale: 0 }}
-                          animate={{ scale: 1 }}
-                          transition={{ type: "spring", stiffness: 200, delay: 0.1 }}
-                          className="text-5xl mb-4"
-                        >
-                          {result.prediction === 1 ? "⚠️" : "✅"}
-                        </motion.div>
-                        <h3 className={`text-2xl font-bold mb-2 ${
-                          result.prediction === 1 ? "text-red-700" : "text-green-700"
-                        }`}>
-                          {result.risk_level}
-                        </h3>
-                        {result.confidence && (
-                          <p className="text-sm text-slate-600 mb-4">
-                            Confidence: {(result.confidence * 100).toFixed(1)}%
-                          </p>
-                        )}
-                        
-                        <div className="w-full mt-4 p-4 bg-white/50 rounded-lg text-left">
-                          <h4 className="font-semibold text-slate-800 mb-2">📋 Recommendations:</h4>
-                          <ul className="space-y-2">
-                            {result.recommendations.map((rec, idx) => (
-                              <motion.li 
-                                key={idx}
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: 0.2 + idx * 0.1 }}
-                                className="text-sm text-slate-700 flex items-start gap-2"
-                              >
-                                <span className="mt-0.5">•</span>
-                                <span>{rec}</span>
-                              </motion.li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
                 </AnimatePresence>
-                
-                {history.length > 0 && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.3 }}
-                    className="mt-8 bg-slate-50/50 rounded-xl border border-slate-200/50 p-6"
-                  >
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                        <span className="text-xl">📜</span>
-                        Recent Predictions ({history.length})
-                      </h3>
-                      <div className="flex gap-2">
-                        <button 
-                          className="text-sm text-green-600 hover:text-green-700 font-medium px-3 py-1 border border-green-300 rounded-lg hover:bg-green-50 transition-colors" 
-                          onClick={exportResults}
-                        >
-                          📥 Export
-                        </button>
-                        <button 
-                          className="text-sm text-red-600 hover:text-red-700 font-medium px-3 py-1 border border-red-300 rounded-lg hover:bg-red-50 transition-colors" 
-                          onClick={() => setHistory([])}
-                        >
-                          🗑️ Clear
-                        </button>
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      {history.map((h, i) => (
-                        <motion.div
-                          key={i}
-                          initial={{ opacity: 0, x: -20 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: i * 0.05 }}
-                          className="bg-white rounded-lg p-4 border border-slate-200 hover:shadow-md transition-shadow"
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs text-slate-500">{h.time}</span>
-                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium ${
-                              h.result.prediction === 1 
-                                ? "bg-red-100 text-red-700" 
-                                : "bg-green-100 text-green-700"
-                            }`}>
-                              {h.result.prediction === 1 ? "🚨 High Risk" : "✅ Low Risk"}
-                              {h.result.confidence && ` (${(h.result.confidence * 100).toFixed(0)}%)`}
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-3 gap-2 text-xs">
-                            {(Object.entries(h.form) as [keyof UrineData, number][]).map(([k, v]) => (
-                              <div key={k} className="bg-slate-50 px-2 py-1 rounded">
-                                <span className="font-medium text-slate-600">{parameterInfo[k].label}:</span>
-                                <span className="ml-1 text-slate-800">{v}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
-                  </motion.div>
-                )}
               </div>
             </div>
           </motion.div>

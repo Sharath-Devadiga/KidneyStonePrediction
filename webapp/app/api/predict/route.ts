@@ -18,10 +18,12 @@ export async function POST(request: Request) {
     // 4. Send the final prediction back to the frontend
     return NextResponse.json(prediction, { status: 200 });
 
-  } catch (error) {
-    console.error("Error in Next.js backend:", error);
+  } catch (error: any) {
     return NextResponse.json(
-      { error: "Failed to get prediction from model" },
+      { 
+        error: "Failed to get prediction from model",
+        details: error.response?.data || error.message 
+      },
       { status: 500 }
     );
   }

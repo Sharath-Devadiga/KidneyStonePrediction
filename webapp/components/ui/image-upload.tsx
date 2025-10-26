@@ -65,77 +65,120 @@ export function ImageUpload({ onImageUpload, isLoading = false }: ImageUploadPro
 
   return (
     <div className="w-full">
-      <div
-        className={`relative h-64 rounded-lg border-2 border-dashed transition-colors cursor-pointer ${
-          dragActive ? "border-blue-500 bg-blue-50" : "border-slate-300"
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className={`relative h-72 rounded-xl border-2 border-dashed transition-all cursor-pointer overflow-hidden ${
+          dragActive 
+            ? "border-blue-500 bg-gradient-to-br from-blue-50 to-indigo-50 scale-105 shadow-xl" 
+            : "border-slate-300 bg-gradient-to-br from-white to-slate-50 hover:border-blue-400 hover:shadow-lg"
         }`}
         onDragEnter={handleDrag}
         onDragLeave={handleDrag}
         onDragOver={handleDrag}
         onDrop={handleDrop}
-        onClick={openFileSystem} // <-- Make the whole area clickable
+        onClick={openFileSystem}
+        whileHover={{ scale: preview ? 1 : 1.01 }}
+        whileTap={{ scale: 0.99 }}
       >
         <input
           type="file"
           accept="image/*"
           onChange={handleChange}
-          ref={fileInputRef} // <-- Assign ref
-          className="hidden" // <-- Hide the input
+          ref={fileInputRef}
+          className="hidden"
           disabled={isLoading}
         />
         
         {preview ? (
-          <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
-            <Image
-              src={preview}
-              alt="Preview"
-              layout="fill"
-              objectFit="contain"
-              className="rounded"
-            />
-          </div>
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="absolute inset-0 flex items-center justify-center p-6 bg-gradient-to-br from-slate-50 to-blue-50"
+          >
+            <div className="relative w-full h-full flex items-center justify-center">
+              <Image
+                src={preview}
+                alt="Preview"
+                layout="fill"
+                objectFit="contain"
+                className="rounded-lg"
+              />
+              {!isLoading && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="absolute top-2 right-2 bg-white/90 backdrop-blur-sm rounded-full p-2 shadow-lg"
+                >
+                  <span className="text-green-600 text-xl">✓</span>
+                </motion.div>
+              )}
+            </div>
+          </motion.div>
         ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center pointer-events-none">
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
             <motion.div
               initial={{ scale: 0.5, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="text-4xl mb-3"
+              transition={{ type: "spring", stiffness: 200 }}
+              className="relative"
             >
-              📷
+              <motion.div
+                animate={dragActive ? { 
+                  scale: [1, 1.2, 1],
+                  rotate: [0, 5, -5, 0]
+                } : {}}
+                transition={{ duration: 0.5 }}
+                className="text-6xl mb-4"
+              >
+                📷
+              </motion.div>
+              {dragActive && (
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  className="absolute -inset-4 bg-blue-500/20 rounded-full blur-xl"
+                />
+              )}
             </motion.div>
-            <p className="text-sm font-medium text-slate-700">
+            
+            <p className="text-base font-semibold text-slate-800 mb-2">
               {isLoading ? (
-                <span className="flex items-center gap-2">
+                <span className="flex items-center gap-3">
                   <motion.span
                     animate={{ rotate: 360 }}
                     transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                    className="inline-block w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full"
+                    className="inline-block w-5 h-5 border-3 border-slate-300 border-t-blue-600 rounded-full"
                   />
                   Processing image...
                 </span>
+              ) : dragActive ? (
+                <span className="text-blue-600">Drop your image here!</span>
               ) : (
                 "Drag and drop your image here"
               )}
             </p>
-            <p className="mt-1.5 text-xs text-slate-500">
-              Supported formats: JPEG, PNG
-            </p>
-            {/* Add an explicit button */}
-            {!isLoading && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation(); // <-- Prevent double click
-                  openFileSystem();
-                }}
-                className="mt-4 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors pointer-events-auto"
-              >
-                Click to browse
-              </button>
+            
+            {!isLoading && !dragActive && (
+              <>
+                <p className="text-sm text-slate-500 mb-4">
+                  or click to browse from your device
+                </p>
+                
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="flex items-center gap-2 text-xs text-slate-400 bg-slate-100 px-4 py-2 rounded-full"
+                >
+                  <span>📁</span>
+                  <span>Supported: JPEG, PNG</span>
+                </motion.div>
+              </>
             )}
           </div>
         )}
-      </div>
+      </motion.div>
     </div>
   );
 }
