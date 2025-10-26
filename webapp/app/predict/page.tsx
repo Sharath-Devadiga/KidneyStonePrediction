@@ -2,15 +2,18 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import * as Tabs from '@radix-ui/react-tabs';
+import { ImageUpload } from "@/components/ui/image-upload";
+import axios from "axios";
 
 // Types
 interface UrineData {
-  gravity: number;
-  ph: number;
-  osmo: number;
-  cond: number;
-  urea: number;
-  calc: number;
+  gravity: number | null;
+  ph: number | null;
+  osmo: number | null;
+  cond: number | null;
+  urea: number | null;
+  calc: number | null;
 }
 
 interface PredictionResult {
@@ -63,12 +66,12 @@ const kidneyFacts = [
 
 export default function PredictPage() {
   const [form, setForm] = useState<UrineData>({
-    gravity: 1.015,
-    ph: 6.0,
-    osmo: 400,
-    cond: 15.0,
-    urea: 150,
-    calc: 2.0,
+    gravity: null,
+    ph: null,
+    osmo: null,
+    cond: null,
+    urea: null,
+    calc: null,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,7 +106,7 @@ export default function PredictPage() {
   };
 
   const handleReset = () => {
-    setForm({ gravity: 1.015, ph: 6.0, osmo: 400, cond: 15.0, urea: 150, calc: 2.0 });
+    setForm({ gravity: null, ph: null, osmo: null, cond: null, urea: null, calc: null });
     setResult(null);
     setError(null);
   };
@@ -125,6 +128,48 @@ export default function PredictPage() {
     }, 8000);
     return () => clearInterval(interval);
   }, []);
+
+  const [imageLoading, setImageLoading] = useState(false);
+
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  
+  const handleImageUpload = async (file: File) => {
+    setImageLoading(true);
+    setError(null);
+    
+    try {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64Image = reader.result as string;
+        setSelectedImage(base64Image);
+        setImageLoading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      setError("Failed to process image. Please try again.");
+      setImageLoading(false);
+    }
+  };
+
+  const handleAnalyzeImage = async () => {
+    if (!selectedImage) return;
+    
+    setImageLoading(true);
+    setError(null);
+    
+    try {
+      const response = await axios.post("/api/predict/image", 
+        { image: selectedImage },
+      ); 
+
+      const data = response.data;
+      setForm(data);
+    } catch (err) {
+      setError("Failed to analyze image. Please try manual entry.");
+    } finally {
+      setImageLoading(false);
+    }
+  };
 
   return (
     <motion.div 
@@ -222,81 +267,165 @@ export default function PredictPage() {
                   </motion.span>
                   <div>
                     <h2 className="text-2xl font-bold text-slate-800">Urine Analysis Parameters</h2>
-                    <p className="text-sm text-slate-600 mt-1">Enter your test results below for AI-powered prediction</p>
+                    <p className="text-sm text-slate-600 mt-1">Upload an image or enter your test results for AI-powered prediction</p>
                   </div>
                 </div>
               </motion.div>
-              
+
               <div className="p-6">
-                <form onSubmit={handleSubmit} className="space-y-8">
-                  <div className="grid sm:grid-cols-2 gap-6">
-                    {(Object.entries(form) as [keyof UrineData, number][]).map(([key, value], index) => (
-                      <motion.div 
-                        key={key}
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.6 + index * 0.05 }}
-                        className="space-y-2"
-                      >
-                        <label 
-                          htmlFor={key} 
-                          className="block text-sm font-semibold text-slate-700"
+                <Tabs.Root defaultValue="manual">
+                  <Tabs.List className="flex space-x-2 border-b border-slate-200 mb-6">
+                    <Tabs.Trigger
+                      value="manual"
+                      className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 data-[state=active]:text-blue-600 data-[state=active]:border-b-2 data-[state=active]:border-blue-600"
+                    >
+                      ⌨️ Manual Entry
+                    </Tabs.Trigger>
+                    <Tabs.Trigger
+                      value="image"
+                      className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 data-[state=active]:text-blue-600 data-[state=active]:border-b-2 data-[state=active]:border-blue-600"
+                    >
+                      📷 Upload Image
+                    </Tabs.Trigger>
+                  </Tabs.List>
+
+                  <Tabs.Content value="manual" className="space-y-6">
+                    <form onSubmit={handleSubmit} className="space-y-8">
+                      <div className="grid sm:grid-cols-2 gap-6">
+                        {(Object.entries(form) as [keyof UrineData, number][]).map(([key, value], index) => (
+                          <motion.div 
+                            key={key}
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.6 + index * 0.05 }}
+                            className="space-y-2"
+                          >
+                            <label 
+                              htmlFor={key} 
+                              className="block text-sm font-semibold text-slate-700"
+                            >
+                              {parameterInfo[key].label}
+                              <span className="ml-2 text-xs font-normal text-slate-500">
+                                ({parameterInfo[key].range} {parameterInfo[key].unit})
+                              </span>
+                            </label>
+                            <input
+                              type="number"
+                              id={key}
+                              name={key}
+                              value={value ?? ""}
+                              onChange={handleChange}
+                              step="any"
+                              required
+                              className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none"
+                              placeholder={`Enter ${parameterInfo[key].label.toLowerCase()}`}
+                            />
+                          </motion.div>
+                        ))}
+                      </div>
+
+                      <div className="flex gap-4">
+                        <motion.button
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          type="submit" 
+                          className="flex-1 py-3.5 text-base font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed" 
+                          disabled={loading}
                         >
-                          {parameterInfo[key].label}
-                          <span className="ml-2 text-xs font-normal text-slate-500">
-                            ({parameterInfo[key].range} {parameterInfo[key].unit})
-                          </span>
-                        </label>
-                        <input
-                          type="number"
-                          id={key}
-                          name={key}
-                          value={value}
-                          onChange={handleChange}
-                          step="any"
-                          required
-                          className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none"
-                          placeholder={`Enter ${parameterInfo[key].label.toLowerCase()}`}
-                        />
-                      </motion.div>
-                    ))}
-                  </div>
-                  
-                  <div className="flex gap-4">
-                    <motion.button
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      type="submit" 
-                      className="flex-1 py-3.5 text-base font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed" 
-                      disabled={loading}
-                    >
-                      {loading ? (
-                        <span className="flex items-center gap-3 justify-center">
-                          <motion.span 
-                            animate={{ rotate: 360 }}
-                            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                            className="inline-block w-5 h-5 border-3 border-white/30 border-t-white rounded-full"
-                          />
-                          <span>Analyzing Results...</span>
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-2 justify-center">
-                          <span>🔍</span>
-                          <span>Predict Risk</span>
-                        </span>
+                          {loading ? (
+                            <span className="flex items-center gap-3 justify-center">
+                              <motion.span 
+                                animate={{ rotate: 360 }}
+                                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                                className="inline-block w-5 h-5 border-3 border-white/30 border-t-white rounded-full"
+                              />
+                              <span>Analyzing Results...</span>
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-2 justify-center">
+                              <span>🔍</span>
+                              <span>Predict Risk</span>
+                            </span>
+                          )}
+                        </motion.button>
+                        <motion.button
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          type="button" 
+                          className="px-8 py-3.5 border-2 border-slate-300 rounded-lg hover:bg-slate-50 transition-all font-medium text-slate-700" 
+                          onClick={handleReset}
+                        >
+                          Reset
+                        </motion.button>
+                      </div>
+                    </form>
+                  </Tabs.Content>
+
+                  <Tabs.Content value="image" className="space-y-6">
+                    <div className="space-y-4">
+                      <ImageUpload onImageUpload={handleImageUpload} isLoading={imageLoading} />
+                      {selectedImage && (
+                        <div className="mt-4 flex justify-center">
+                          <motion.button
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={handleAnalyzeImage}
+                            className="py-2.5 px-6 text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={imageLoading}
+                          >
+                            {imageLoading ? (
+                              <span className="flex items-center gap-3 justify-center">
+                                <motion.span 
+                                  animate={{ rotate: 360 }}
+                                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                                  className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
+                                />
+                                <span>Analyzing Image...</span>
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-2 justify-center">
+                                <span>🔬</span>
+                                <span>Analyze Image</span>
+                              </span>
+                            )}
+                          </motion.button>
+                        </div>
                       )}
-                    </motion.button>
-                    <motion.button
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      type="button" 
-                      className="px-8 py-3.5 border-2 border-slate-300 rounded-lg hover:bg-slate-50 transition-all font-medium text-slate-700" 
-                      onClick={handleReset}
-                    >
-                      Reset
-                    </motion.button>
-                  </div>
-                </form>
+                      {Object.entries(form).some(([, value]) => value !== null) && (
+                        <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+                          <h3 className="text-sm font-semibold text-blue-700 mb-2">Detected Parameters:</h3>
+                          <div className="grid sm:grid-cols-2 gap-4">
+                            {Object.entries(form).map(([key, value]) => (
+                              <div key={key} className="bg-white p-2 rounded shadow-sm">
+                                <span className="text-xs text-slate-600">{parameterInfo[key as keyof UrineData].label}:</span>
+                                <span className="ml-2 text-sm font-medium">{value ?? "Not detected"}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-4 flex gap-4">
+                            <motion.button
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
+                              onClick={handleSubmit}
+                              className="flex-1 py-2.5 text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                              disabled={loading}
+                            >
+                              Predict with Detected Values
+                            </motion.button>
+                            <motion.button
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
+                              onClick={handleReset}
+                              className="px-4 py-2.5 text-sm border-2 border-slate-300 rounded-lg hover:bg-slate-50 transition-all font-medium text-slate-700"
+                            >
+                              Reset
+                            </motion.button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </Tabs.Content>
+                </Tabs.Root>
                 
                 <AnimatePresence mode="wait">
                   {error && (
