@@ -27,8 +27,11 @@ app.add_middleware(
 
 # 2. Load the trained model
 try:
+    import warnings
+    warnings.filterwarnings('ignore')
     model = joblib.load("models/kidney_stone_model_extended.joblib")
     MODEL_LOADED = True
+    print("✓ Model loaded successfully!")
 except Exception as e:
     print(f"Warning: Could not load model - {e}")
     model = None
