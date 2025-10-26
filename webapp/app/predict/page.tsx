@@ -1,34 +1,68 @@
 "use client";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Link from "next/link";
 
-// Mock prediction function (replace with your actual API call)
-const predictKidneyStone = async (data) => {
-  await new Promise(resolve => setTimeout(resolve, 1500));
-  const riskScore = (data.gravity + data.ph + data.calc) / 3;
-  return { prediction: riskScore > 5 ? 1 : 0 };
+// Types
+interface UrineData {
+  gravity: number;
+  ph: number;
+  osmo: number;
+  cond: number;
+  urea: number;
+  calc: number;
+}
+
+interface PredictionResult {
+  prediction: number;
+  risk_level: string;
+  confidence?: number;
+  recommendations: string[];
+  timestamp: string;
+}
+
+interface HistoryEntry {
+  form: UrineData;
+  result: PredictionResult;
+  time: string;
+}
+
+// API call function
+const predictKidneyStone = async (data: UrineData): Promise<PredictionResult> => {
+  const response = await fetch("/api/predict", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  
+  if (!response.ok) {
+    throw new Error("Prediction failed. Please try again.");
+  }
+  
+  return response.json();
 };
 
 // Parameter info with labels and normal ranges
-const parameterInfo = {
-  gravity: { label: "Specific Gravity", range: "1.005-1.030" },
-  ph: { label: "pH Level", range: "4.5-8.0" },
-  osmo: { label: "Osmolarity", range: "150-1200 mOsm/kg" },
-  cond: { label: "Conductivity", range: "5-35 mS/cm" },
-  urea: { label: "Urea Concentration", range: "50-500 mg/dL" },
-  calc: { label: "Calcium Level", range: "0-15 mg/dL" },
+const parameterInfo: Record<keyof UrineData, { label: string; range: string; unit: string }> = {
+  gravity: { label: "Specific Gravity", range: "1.005-1.030", unit: "sg" },
+  ph: { label: "pH Level", range: "4.5-8.0", unit: "pH" },
+  osmo: { label: "Osmolarity", range: "150-1200", unit: "mOsm/kg" },
+  cond: { label: "Conductivity", range: "5-35", unit: "mS/cm" },
+  urea: { label: "Urea Concentration", range: "50-500", unit: "mg/dL" },
+  calc: { label: "Calcium Level", range: "0-15", unit: "mg/dL" },
 };
 
 const kidneyFacts = [
-  "Kidney stones affect about 1 in 10 people during their lifetime.",
-  "Drinking plenty of water can help prevent kidney stones.",
-  "Some stones can be as small as a grain of sand or as large as a golf ball!",
-  "Symptoms include severe pain, nausea, and blood in urine.",
-  "Diet and genetics both play a role in kidney stone formation.",
+  "💧 Kidney stones affect about 1 in 10 people during their lifetime.",
+  "🚰 Drinking plenty of water (2-3 liters daily) can help prevent kidney stones.",
+  "📏 Some stones can be as small as a grain of sand or as large as a golf ball!",
+  "🩺 Symptoms include severe pain, nausea, and blood in urine.",
+  "🧬 Diet and genetics both play a role in kidney stone formation.",
+  "🥗 A balanced diet low in sodium and animal protein helps prevent stones.",
 ];
 
 export default function PredictPage() {
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<UrineData>({
     gravity: 1.015,
     ph: 6.0,
     osmo: 400,
@@ -37,27 +71,32 @@ export default function PredictPage() {
     calc: 2.0,
   });
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [result, setResult] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<PredictionResult | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [factIdx, setFactIdx] = useState(0);
 
-  const handleChange = (e) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm({ ...form, [e.target.name]: Number(e.target.value) });
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     setResult(null);
+    
     try {
       const res = await predictKidneyStone(form);
-      setResult(res.prediction);
-      const entry = { form, result: res.prediction, time: new Date().toLocaleString() };
+      setResult(res);
+      const entry: HistoryEntry = { 
+        form: { ...form }, 
+        result: res, 
+        time: new Date().toLocaleString() 
+      };
       setHistory((prev) => [entry, ...prev].slice(0, 5));
     } catch (err) {
-      setError(err.message || "Prediction failed");
+      setError(err instanceof Error ? err.message : "Prediction failed");
     } finally {
       setLoading(false);
     }
@@ -67,6 +106,17 @@ export default function PredictPage() {
     setForm({ gravity: 1.015, ph: 6.0, osmo: 400, cond: 15.0, urea: 150, calc: 2.0 });
     setResult(null);
     setError(null);
+  };
+
+  const exportResults = () => {
+    const data = JSON.stringify(history, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `kidney-stone-predictions-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   useEffect(() => {
@@ -92,7 +142,7 @@ export default function PredictPage() {
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            <div className="flex items-center space-x-3">
+            <Link href="/" className="flex items-center space-x-3">
               <motion.div 
                 initial={{ scale: 0, rotate: -180 }}
                 animate={{ scale: 1, rotate: 0 }}
@@ -109,17 +159,33 @@ export default function PredictPage() {
               >
                 Kidney Stone Predictor
               </motion.span>
+            </Link>
+            <div className="flex items-center gap-3">
+              <Link href="/">
+                <motion.button 
+                  initial={{ x: 20, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  transition={{ delay: 0.4 }}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="px-4 py-2 text-sm font-medium text-blue-700 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors"
+                >
+                  🏠 Home
+                </motion.button>
+              </Link>
+              <Link href="/about">
+                <motion.button 
+                  initial={{ x: 20, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  transition={{ delay: 0.45 }}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="px-4 py-2 text-sm font-medium text-blue-700 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors"
+                >
+                  ℹ️ About
+                </motion.button>
+              </Link>
             </div>
-            <motion.button 
-              initial={{ x: 20, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              transition={{ delay: 0.4 }}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              className="px-4 py-2 text-sm font-medium text-blue-700 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors"
-            >
-              About / Model Info
-            </motion.button>
           </div>
         </div>
       </motion.nav>
@@ -156,7 +222,7 @@ export default function PredictPage() {
                   </motion.span>
                   <div>
                     <h2 className="text-2xl font-bold text-slate-800">Urine Analysis Parameters</h2>
-                    <p className="text-sm text-slate-600 mt-1">Enter your test results below for prediction</p>
+                    <p className="text-sm text-slate-600 mt-1">Enter your test results below for AI-powered prediction</p>
                   </div>
                 </div>
               </motion.div>
@@ -164,7 +230,7 @@ export default function PredictPage() {
               <div className="p-6">
                 <form onSubmit={handleSubmit} className="space-y-8">
                   <div className="grid sm:grid-cols-2 gap-6">
-                    {Object.entries(form).map(([key, value], index) => (
+                    {(Object.entries(form) as [keyof UrineData, number][]).map(([key, value], index) => (
                       <motion.div 
                         key={key}
                         initial={{ opacity: 0, y: 20 }}
@@ -178,7 +244,7 @@ export default function PredictPage() {
                         >
                           {parameterInfo[key].label}
                           <span className="ml-2 text-xs font-normal text-slate-500">
-                            ({parameterInfo[key].range})
+                            ({parameterInfo[key].range} {parameterInfo[key].unit})
                           </span>
                         </label>
                         <input
@@ -254,7 +320,7 @@ export default function PredictPage() {
                       exit={{ opacity: 0, scale: 0.9, y: 20 }}
                       transition={{ type: "spring", stiffness: 200 }}
                       className={`mt-6 p-6 rounded-xl shadow-lg ${
-                        result === 1 
+                        result.prediction === 1 
                           ? "bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200" 
                           : "bg-gradient-to-br from-green-50 to-emerald-100 border-2 border-green-200"
                       }`}
@@ -266,19 +332,36 @@ export default function PredictPage() {
                           transition={{ type: "spring", stiffness: 200, delay: 0.1 }}
                           className="text-5xl mb-4"
                         >
-                          {result === 1 ? "⚠️" : "✅"}
+                          {result.prediction === 1 ? "⚠️" : "✅"}
                         </motion.div>
-                        <h3 className={`text-xl font-bold mb-2 ${
-                          result === 1 ? "text-red-700" : "text-green-700"
+                        <h3 className={`text-2xl font-bold mb-2 ${
+                          result.prediction === 1 ? "text-red-700" : "text-green-700"
                         }`}>
-                          {result === 1 ? "High Risk: Kidney Stone Likely" : "Low Risk: No Kidney Stone Detected"}
+                          {result.risk_level}
                         </h3>
-                        <p className="text-sm text-slate-700">
-                          {result === 1 
-                            ? "It's recommended to consult with a healthcare professional for further evaluation." 
-                            : "Your parameters are within normal ranges. Keep maintaining healthy habits!"
-                          }
-                        </p>
+                        {result.confidence && (
+                          <p className="text-sm text-slate-600 mb-4">
+                            Confidence: {(result.confidence * 100).toFixed(1)}%
+                          </p>
+                        )}
+                        
+                        <div className="w-full mt-4 p-4 bg-white/50 rounded-lg text-left">
+                          <h4 className="font-semibold text-slate-800 mb-2">📋 Recommendations:</h4>
+                          <ul className="space-y-2">
+                            {result.recommendations.map((rec, idx) => (
+                              <motion.li 
+                                key={idx}
+                                initial={{ opacity: 0, x: -10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: 0.2 + idx * 0.1 }}
+                                className="text-sm text-slate-700 flex items-start gap-2"
+                              >
+                                <span className="mt-0.5">•</span>
+                                <span>{rec}</span>
+                              </motion.li>
+                            ))}
+                          </ul>
+                        </div>
                       </div>
                     </motion.div>
                   )}
@@ -294,59 +377,53 @@ export default function PredictPage() {
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                         <span className="text-xl">📜</span>
-                        Recent Predictions
+                        Recent Predictions ({history.length})
                       </h3>
-                      <button 
-                        className="text-sm text-blue-600 hover:text-blue-700 font-medium" 
-                        onClick={() => setHistory([])}
-                      >
-                        Clear History
-                      </button>
-                    </div>
-                    <div className="overflow-hidden rounded-lg border border-slate-200">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="bg-slate-100 text-slate-800">
-                              <th className="px-4 py-3 text-left font-semibold">Time</th>
-                              <th className="px-4 py-3 text-left font-semibold">Result</th>
-                              <th className="px-4 py-3 text-left font-semibold">Parameters</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-200">
-                            {history.map((h, i) => (
-                              <motion.tr 
-                                key={i}
-                                initial={{ opacity: 0, x: -20 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: i * 0.05 }}
-                                className="bg-white hover:bg-slate-50 transition-colors"
-                              >
-                                <td className="px-4 py-3 text-slate-600">{h.time}</td>
-                                <td className="px-4 py-3">
-                                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium ${
-                                    h.result === 1 
-                                      ? "bg-red-100 text-red-700" 
-                                      : "bg-green-100 text-green-700"
-                                  }`}>
-                                    {h.result === 1 ? "🚨 High Risk" : "✅ Low Risk"}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-3 text-slate-600">
-                                  <div className="flex flex-wrap gap-2">
-                                    {Object.entries(h.form).map(([k, v]) => (
-                                      <span key={k} className="inline-flex items-center text-xs bg-slate-100 px-2 py-1 rounded">
-                                        <span className="font-medium">{parameterInfo[k].label}:</span>
-                                        <span className="ml-1">{v}</span>
-                                      </span>
-                                    ))}
-                                  </div>
-                                </td>
-                              </motion.tr>
-                            ))}
-                          </tbody>
-                        </table>
+                      <div className="flex gap-2">
+                        <button 
+                          className="text-sm text-green-600 hover:text-green-700 font-medium px-3 py-1 border border-green-300 rounded-lg hover:bg-green-50 transition-colors" 
+                          onClick={exportResults}
+                        >
+                          📥 Export
+                        </button>
+                        <button 
+                          className="text-sm text-red-600 hover:text-red-700 font-medium px-3 py-1 border border-red-300 rounded-lg hover:bg-red-50 transition-colors" 
+                          onClick={() => setHistory([])}
+                        >
+                          🗑️ Clear
+                        </button>
                       </div>
+                    </div>
+                    <div className="space-y-3">
+                      {history.map((h, i) => (
+                        <motion.div
+                          key={i}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: i * 0.05 }}
+                          className="bg-white rounded-lg p-4 border border-slate-200 hover:shadow-md transition-shadow"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs text-slate-500">{h.time}</span>
+                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium ${
+                              h.result.prediction === 1 
+                                ? "bg-red-100 text-red-700" 
+                                : "bg-green-100 text-green-700"
+                            }`}>
+                              {h.result.prediction === 1 ? "🚨 High Risk" : "✅ Low Risk"}
+                              {h.result.confidence && ` (${(h.result.confidence * 100).toFixed(0)}%)`}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 text-xs">
+                            {(Object.entries(h.form) as [keyof UrineData, number][]).map(([k, v]) => (
+                              <div key={k} className="bg-slate-50 px-2 py-1 rounded">
+                                <span className="font-medium text-slate-600">{parameterInfo[k].label}:</span>
+                                <span className="ml-1 text-slate-800">{v}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </motion.div>
+                      ))}
                     </div>
                   </motion.div>
                 )}
@@ -426,7 +503,7 @@ export default function PredictPage() {
               </div>
               <div className="p-6">
                 <div className="space-y-3">
-                  {Object.entries(parameterInfo).map(([key, info], index) => (
+                  {(Object.entries(parameterInfo) as [keyof UrineData, typeof parameterInfo[keyof UrineData]][]).map(([key, info], index) => (
                     <motion.div
                       key={key}
                       initial={{ opacity: 0, y: 20 }}
@@ -439,7 +516,7 @@ export default function PredictPage() {
                       <div className="flex items-center gap-2 text-sm text-slate-600">
                         <span className="text-blue-500">📊</span>
                         <span>
-                          Normal: <span className="font-medium text-blue-600">{info.range}</span>
+                          Normal: <span className="font-medium text-blue-600">{info.range} {info.unit}</span>
                         </span>
                       </div>
                     </motion.div>
