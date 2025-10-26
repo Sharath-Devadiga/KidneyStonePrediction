@@ -171,6 +171,51 @@ export default function PredictPage() {
     }
   };
 
+  // CT/X-Ray scan prediction states and handlers
+  const [ctImage, setCtImage] = useState<File | null>(null);
+  const [ctPreview, setCtPreview] = useState<string | null>(null);
+  const [ctLoading, setCtLoading] = useState(false);
+  const [ctResult, setCtResult] = useState<any | null>(null);
+
+  const handleCtImageUpload = async (file: File) => {
+    setCtImage(file);
+    setCtLoading(false);
+    setCtResult(null);
+    setError(null);
+    
+    // Create preview
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setCtPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleCtImagePredict = async () => {
+    if (!ctImage) return;
+    
+    setCtLoading(true);
+    setError(null);
+    setCtResult(null);
+    
+    try {
+      const formData = new FormData();
+      formData.append("file", ctImage);
+      
+      const response = await axios.post("/api/predict/ct-image", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data"
+        }
+      });
+      
+      setCtResult(response.data);
+    } catch (err: any) {
+      setError(err?.response?.data?.error || "Failed to analyze CT/X-ray image. Please try again.");
+    } finally {
+      setCtLoading(false);
+    }
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -285,7 +330,13 @@ export default function PredictPage() {
                       value="image"
                       className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 data-[state=active]:text-blue-600 data-[state=active]:border-b-2 data-[state=active]:border-blue-600"
                     >
-                      📷 Upload Image
+                      � Urine Test Image
+                    </Tabs.Trigger>
+                    <Tabs.Trigger
+                      value="ct-scan"
+                      className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 data-[state=active]:text-blue-600 data-[state=active]:border-b-2 data-[state=active]:border-blue-600"
+                    >
+                      🏥 CT/X-Ray Scan
                     </Tabs.Trigger>
                   </Tabs.List>
 
@@ -422,6 +473,110 @@ export default function PredictPage() {
                             </motion.button>
                           </div>
                         </div>
+                      )}
+                    </div>
+                  </Tabs.Content>
+
+                  <Tabs.Content value="ct-scan" className="space-y-6">
+                    <div className="space-y-4">
+                      <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                        <p className="text-sm text-blue-800">
+                          <strong>🏥 CT/X-Ray Scan Analysis:</strong> Upload a kidney CT scan or X-ray image for AI-powered stone detection.
+                        </p>
+                      </div>
+                      
+                      <ImageUpload onImageUpload={handleCtImageUpload} isLoading={ctLoading} />
+                      
+                      {ctPreview && (
+                        <div className="mt-4 flex justify-center">
+                          <motion.button
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={handleCtImagePredict}
+                            className="py-3 px-8 text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={ctLoading}
+                          >
+                            {ctLoading ? (
+                              <span className="flex items-center gap-3 justify-center">
+                                <motion.span 
+                                  animate={{ rotate: 360 }}
+                                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                                  className="inline-block w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
+                                />
+                                <span>Analyzing Scan...</span>
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-2 justify-center">
+                                <span>🔬</span>
+                                <span>Analyze CT/X-Ray Image</span>
+                              </span>
+                            )}
+                          </motion.button>
+                        </div>
+                      )}
+                      
+                      {ctResult && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="mt-6 p-6 bg-white border-2 border-blue-200 rounded-xl shadow-lg"
+                        >
+                          <div className="flex items-center gap-3 mb-4">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${
+                              ctResult.classification === 'Stone' 
+                                ? 'bg-red-100' 
+                                : 'bg-green-100'
+                            }`}>
+                              {ctResult.classification === 'Stone' ? '🔴' : '✅'}
+                            </div>
+                            <div>
+                              <h3 className="text-xl font-bold text-slate-800">
+                                {ctResult.classification === 'Stone' ? 'Kidney Stone Detected' : 'No Stone Detected'}
+                              </h3>
+                              <p className="text-sm text-slate-600">
+                                Confidence: {(ctResult.confidence * 100).toFixed(1)}%
+                              </p>
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div className="p-3 bg-slate-50 rounded-lg">
+                              <p className="text-xs text-slate-600 mb-1">Probability Normal</p>
+                              <p className="text-lg font-semibold text-green-600">
+                                {(ctResult.probability_normal * 100).toFixed(1)}%
+                              </p>
+                            </div>
+                            <div className="p-3 bg-slate-50 rounded-lg">
+                              <p className="text-xs text-slate-600 mb-1">Probability Stone</p>
+                              <p className="text-lg font-semibold text-red-600">
+                                {(ctResult.probability_stone * 100).toFixed(1)}%
+                              </p>
+                            </div>
+                          </div>
+                          
+                          <div className="border-t border-slate-200 pt-4">
+                            <h4 className="font-semibold text-slate-800 mb-3">📋 Recommendations:</h4>
+                            <ul className="space-y-2">
+                              {ctResult.recommendations.map((rec: string, idx: number) => (
+                                <motion.li
+                                  key={idx}
+                                  initial={{ opacity: 0, x: -10 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  transition={{ delay: idx * 0.1 }}
+                                  className="flex items-start gap-2 text-sm text-slate-700"
+                                >
+                                  <span className="text-blue-500 mt-0.5">•</span>
+                                  <span>{rec}</span>
+                                </motion.li>
+                              ))}
+                            </ul>
+                          </div>
+                          
+                          <div className="mt-4 text-xs text-slate-500">
+                            <p>Model: {ctResult.model_type}</p>
+                            <p>Analyzed: {new Date(ctResult.timestamp).toLocaleString()}</p>
+                          </div>
+                        </motion.div>
                       )}
                     </div>
                   </Tabs.Content>

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional
@@ -6,12 +6,16 @@ import joblib
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import os
+import io
+from PIL import Image
+import json
 
 # 1. Initialize the FastAPI app
 app = FastAPI(
     title="Kidney Stone Prediction API", 
-    description="Advanced API for predicting kidney stone risk based on urine analysis",
-    version="2.0.0",
+    description="Advanced API for predicting kidney stone risk based on urine analysis and medical images",
+    version="3.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -25,17 +29,49 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. Load the trained model
+# 2. Load the trained models
 try:
     import warnings
     warnings.filterwarnings('ignore')
     model = joblib.load("models/kidney_stone_model_extended.joblib")
     MODEL_LOADED = True
-    print("✓ Model loaded successfully!")
+    print("✓ Urine analysis model loaded successfully!")
 except Exception as e:
-    print(f"Warning: Could not load model - {e}")
+    print(f"Warning: Could not load urine analysis model - {e}")
     model = None
     MODEL_LOADED = False
+
+# Load image model
+IMAGE_MODEL_LOADED = False
+image_model = None
+img_size = (150, 150)
+
+try:
+    import tensorflow as tf
+    from tensorflow.keras.models import load_model as keras_load_model
+    from tensorflow.keras.preprocessing import image as keras_image
+    
+    # Try loading .keras format first, then .h5
+    if os.path.exists("models/kidney_stone_cnn_model.keras"):
+        image_model = keras_load_model("models/kidney_stone_cnn_model.keras")
+        IMAGE_MODEL_LOADED = True
+        print("✓ Image classification model loaded successfully! (.keras format)")
+    elif os.path.exists("models/kidney_stone_cnn_model.h5"):
+        image_model = keras_load_model("models/kidney_stone_cnn_model.h5")
+        IMAGE_MODEL_LOADED = True
+        print("✓ Image classification model loaded successfully! (.h5 format)")
+    else:
+        print("⚠️ Warning: Image model not found. Please train the model first using train_image_model.py")
+    
+    # Load model info
+    if os.path.exists("models/image_model_info.json"):
+        with open("models/image_model_info.json", 'r') as f:
+            model_info = json.load(f)
+            img_size = tuple(model_info.get('img_size', [150, 150]))
+            print(f"✓ Image model info loaded: img_size={img_size}")
+except Exception as e:
+    print(f"⚠️ Warning: Could not load image model - {e}")
+    IMAGE_MODEL_LOADED = False
 
 # 3. Define the input data structures using Pydantic
 class UrineData(BaseModel):
@@ -72,7 +108,92 @@ class BatchPredictionResponse(BaseModel):
     predictions: List[PredictionResponse]
     summary: dict
 
+class ImagePredictionResponse(BaseModel):
+    prediction: int
+    classification: str
+    confidence: float
+    probability_normal: float
+    probability_stone: float
+    recommendations: List[str]
+    timestamp: str
+    model_type: str = "CNN Image Classifier"
+
 # 4. Helper functions
+def preprocess_image(image_data: bytes) -> np.ndarray:
+    """
+    Preprocess image for model prediction
+    
+    Args:
+        image_data: Raw image bytes
+    
+    Returns:
+        Preprocessed image array ready for prediction
+    """
+    try:
+        # Open image from bytes
+        img = Image.open(io.BytesIO(image_data))
+        
+        # Convert to RGB if necessary
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Resize to model input size
+        img = img.resize(img_size)
+        
+        # Convert to array and normalize
+        img_array = np.array(img)
+        img_array = img_array / 255.0  # Normalize to [0, 1]
+        
+        # Add batch dimension
+        img_array = np.expand_dims(img_array, axis=0)
+        
+        return img_array
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error processing image: {str(e)}")
+
+def get_image_recommendations(classification: str, confidence: float) -> List[str]:
+    """
+    Generate recommendations based on image classification
+    
+    Args:
+        classification: 'Stone' or 'Normal'
+        confidence: Confidence score (0-1)
+    
+    Returns:
+        List of recommendations
+    """
+    recommendations = []
+    
+    if classification == "Stone":
+        recommendations.append("🔴 Kidney stone detected in the image")
+        recommendations.append("⚠️ Immediate medical consultation is strongly recommended")
+        recommendations.append("💊 Follow up with a urologist for treatment options")
+        recommendations.append("🔬 Consider additional diagnostic tests (CT scan, ultrasound)")
+        
+        if confidence > 0.9:
+            recommendations.append("📊 High confidence detection - take action promptly")
+        elif confidence > 0.7:
+            recommendations.append("📊 Moderate-high confidence - medical verification advised")
+        else:
+            recommendations.append("📊 Lower confidence - seek professional medical imaging interpretation")
+            
+        recommendations.append("💧 Increase water intake to 2-3 liters per day")
+        recommendations.append("🥗 Discuss dietary modifications with your healthcare provider")
+        
+    else:  # Normal
+        recommendations.append("✅ No kidney stone detected in the image")
+        recommendations.append("👍 Kidney appears normal in this scan")
+        
+        if confidence > 0.9:
+            recommendations.append("📊 High confidence - maintain healthy lifestyle")
+        else:
+            recommendations.append("📊 Consider follow-up imaging if symptoms persist")
+            
+        recommendations.append("💪 Continue preventive measures: adequate hydration")
+        recommendations.append("🏃 Maintain regular physical activity")
+        recommendations.append("🥗 Follow a balanced diet low in sodium and animal protein")
+    
+    return recommendations
 def get_recommendations(prediction: int, data: dict) -> List[str]:
     """Generate personalized recommendations based on prediction and parameters"""
     recommendations = []
@@ -184,14 +305,77 @@ def predict_batch(data: BatchUrineData):
         "summary": summary
     }
 
+@app.post("/predict/image", response_model=ImagePredictionResponse)
+async def predict_image(file: UploadFile = File(...)):
+    """
+    Predict kidney stone presence from CT/X-ray image
+    
+    Args:
+        file: Uploaded image file (JPG, PNG, etc.)
+    
+    Returns:
+        ImagePredictionResponse with classification and recommendations
+    """
+    if not IMAGE_MODEL_LOADED:
+        raise HTTPException(
+            status_code=503, 
+            detail="Image model not loaded. Please train the model first using train_image_model.py"
+        )
+    
+    # Validate file type
+    if not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    try:
+        # Read image data
+        image_data = await file.read()
+        
+        # Preprocess image
+        img_array = preprocess_image(image_data)
+        
+        # Make prediction
+        prediction = image_model.predict(img_array, verbose=0)
+        
+        # Extract probability (sigmoid output for binary classification)
+        probability_stone = float(prediction[0][0])
+        probability_normal = 1.0 - probability_stone
+        
+        # Classify (threshold at 0.5)
+        predicted_class = 1 if probability_stone > 0.5 else 0
+        classification = "Stone" if predicted_class == 1 else "Normal"
+        
+        # Confidence is the probability of the predicted class
+        confidence = probability_stone if predicted_class == 1 else probability_normal
+        
+        # Get recommendations
+        recommendations = get_image_recommendations(classification, confidence)
+        
+        return {
+            "prediction": predicted_class,
+            "classification": classification,
+            "confidence": round(confidence, 4),
+            "probability_normal": round(probability_normal, 4),
+            "probability_stone": round(probability_stone, 4),
+            "recommendations": recommendations,
+            "timestamp": datetime.now().isoformat(),
+            "model_type": "CNN Image Classifier"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+
 # Health check endpoint
 @app.get("/health")
 def health_check():
+    overall_status = "healthy" if (MODEL_LOADED or IMAGE_MODEL_LOADED) else "degraded"
     return {
-        "status": "healthy" if MODEL_LOADED else "degraded",
-        "model_loaded": MODEL_LOADED,
+        "status": overall_status,
+        "urine_model_loaded": MODEL_LOADED,
+        "image_model_loaded": IMAGE_MODEL_LOADED,
         "timestamp": datetime.now().isoformat(),
-        "version": "2.0.0"
+        "version": "3.0.0"
     }
 
 # Statistics endpoint
@@ -260,13 +444,19 @@ def get_metadata():
 # Root endpoint
 @app.get("/")
 def read_root():
+    overall_status = "operational" if (MODEL_LOADED or IMAGE_MODEL_LOADED) else "degraded"
     return {
         "message": "Welcome to the Kidney Stone Prediction API",
-        "version": "2.0.0",
-        "status": "operational" if MODEL_LOADED else "degraded",
+        "version": "3.0.0",
+        "status": overall_status,
+        "capabilities": {
+            "urine_analysis": MODEL_LOADED,
+            "image_classification": IMAGE_MODEL_LOADED
+        },
         "endpoints": {
-            "predict": "/predict - POST endpoint for single predictions",
-            "batch_predict": "/predict/batch - POST endpoint for batch predictions",
+            "predict_urine": "/predict - POST endpoint for urine analysis predictions",
+            "predict_image": "/predict/image - POST endpoint for CT/X-ray image classification",
+            "batch_predict": "/predict/batch - POST endpoint for batch urine predictions",
             "metadata": "/metadata - GET endpoint for model information",
             "statistics": "/statistics - GET endpoint for model statistics",
             "health": "/health - GET endpoint for API health status",
