@@ -1,0 +1,9 @@
+{
+  "img_size": [
+    150,
+    150
+  ],
+  "batch_size": 32,
+  "total_params": 604481,
+  "training_date": "2025-10-26T17:35:19.946736"
+}
