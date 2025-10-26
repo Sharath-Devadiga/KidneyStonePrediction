@@ -139,7 +139,7 @@ try:
     from tensorflow.keras.preprocessing import image as keras_image
     
     # Try loading .keras format first, then .h5
-    if os.path.exists("models/kidney_stone_cnn_model.keras"):
+    if os.path.exists("models/kidney_stone_cnn_model_better.keras"):
         image_model = keras_load_model("models/kidney_stone_cnn_model.keras")
         IMAGE_MODEL_LOADED = True
         print("✓ Image classification model loaded successfully! (.keras format)")
@@ -190,6 +190,7 @@ class PredictionResponse(BaseModel):
     confidence: Optional[float] = None
     recommendations: List[str]
     timestamp: str
+    analysis_notes: Optional[str] = None  # Added for Gemini AI analysis details
 
 class BatchPredictionResponse(BaseModel):
     predictions: List[PredictionResponse]
@@ -434,19 +435,17 @@ Respond with ONLY one letter: A, B, or C"""
                 validation_response = gemini_generate(validation_prompt, img_pil)
                 image_type = validation_response.text.strip().upper()
                 
-                # If it's a urine test strip, reject it
-                if 'B' in image_type:
+                # Check the first character for more accurate detection
+                first_char = image_type[0] if image_type else 'A'
+                
+                # If it's definitely a urine test strip, reject it
+                if first_char == 'B' or image_type.startswith('B)') or image_type.startswith('B.'):
                     raise HTTPException(
                         status_code=400, 
                         detail="❌ Invalid image type. This appears to be a urine test strip. Please use the 'Urine Test Image' tab for urine strip analysis, or upload a CT/X-ray scan image here."
                     )
                 
-                # If it's neither medical scan nor urine strip
-                if 'C' in image_type:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="❌ Invalid image type. Please upload a CT scan or X-ray image of kidneys."
-                    )
+                # For medical scans (A) or uncertain (C), continue with prediction
             except HTTPException:
                 raise
             except Exception as e:
@@ -504,27 +503,30 @@ def predict_with_gemini(img: Image.Image, parameters: dict) -> dict:
     (because some parameters are missing)
     
     Args:
-        img: PIL Image object
+        img: PIL Image object (the actual urine strip image)
         parameters: Extracted parameters (may have null values)
     
     Returns:
         Prediction result from Gemini AI
     """
     try:
-        # Create a detailed prompt for Gemini to predict kidney stone risk
+        # Create a comprehensive prompt that uses BOTH the image AND extracted parameters
         prompt = f"""You are a medical AI assistant specialized in kidney stone risk assessment.
 
-Based on the following urine test parameters extracted from an image, predict the risk of kidney stones:
+**IMPORTANT: Analyze BOTH the urine test strip IMAGE and the extracted parameters below.**
 
-**Extracted Parameters:**
-- Specific Gravity: {parameters.get('gravity', 'Not detected')}
-- pH Level: {parameters.get('ph', 'Not detected')}
-- Osmolarity (mOsm/kg): {parameters.get('osmo', 'Not detected')}
-- Conductivity (mS/cm): {parameters.get('cond', 'Not detected')}
-- Urea (mg/dL): {parameters.get('urea', 'Not detected')}
-- Calcium (mg/dL): {parameters.get('calc', 'Not detected')}
+**Image Analysis:**
+Look at the actual urine test strip image provided. Examine the color patches and any visible test results on the strip.
 
-**Normal Ranges:**
+**Extracted Parameters (some may be missing):**
+- Specific Gravity: {parameters.get('gravity', 'Not detected - check image')}
+- pH Level: {parameters.get('ph', 'Not detected - check image')}
+- Osmolarity (mOsm/kg): {parameters.get('osmo', 'Not detected - check image')}
+- Conductivity (mS/cm): {parameters.get('cond', 'Not detected - check image')}
+- Urea (mg/dL): {parameters.get('urea', 'Not detected - check image')}
+- Calcium (mg/dL): {parameters.get('calc', 'Not detected - check image')}
+
+**Normal Ranges for Reference:**
 - Specific Gravity: 1.005-1.030
 - pH: 4.5-8.0
 - Osmolarity: 150-1200 mOsm/kg
@@ -532,24 +534,36 @@ Based on the following urine test parameters extracted from an image, predict th
 - Urea: 50-500 mg/dL
 - Calcium: 0-15 mg/dL
 
-**Task:**
-Analyze these parameters and predict the kidney stone risk.
+**Your Task:**
+1. **First**: Look at the IMAGE carefully. Try to read any values directly from the test strip colors or labels
+2. **Second**: Use the extracted parameters where available
+3. **Third**: If you can see values in the image that were marked "Not detected", use those visual readings
+4. **Finally**: Provide a comprehensive kidney stone risk prediction based on ALL available information
+
+**Analysis Approach:**
+- For missing parameters: Try to infer from the image's color patches
+- Consider visible patterns on the test strip
+- Analyze color intensity and combinations
+- Use medical knowledge about kidney stone risk factors
+- If most parameters are missing, base prediction on what you CAN see in the image
 
 **Return your response as a JSON object with this EXACT structure:**
 {{
   "prediction": 0 or 1,
   "risk_level": "Low Risk" or "High Risk",
   "confidence": 0.0 to 1.0,
-  "recommendations": ["recommendation 1", "recommendation 2", "..."]
+  "recommendations": ["recommendation 1", "recommendation 2", "..."],
+  "analysis_notes": "Brief explanation of what you observed in the image"
 }}
 
 Where:
 - prediction: 0 = Low Risk, 1 = High Risk
 - risk_level: Either "Low Risk" or "High Risk"
-- confidence: Your confidence level (0.0 to 1.0)
-- recommendations: Array of 4-6 specific health recommendations
+- confidence: Your confidence level (0.0 to 1.0) - be honest based on available data
+- recommendations: Array of 4-6 specific, actionable health recommendations
+- analysis_notes: What you saw in the image and how you made the prediction
 
-Consider that some parameters may be missing. Base your prediction on available data and known kidney stone risk factors.
+**CRITICAL**: Use the IMAGE as your primary source. The extracted parameters are just a starting point.
 
 Return ONLY the JSON object, no other text."""
 
@@ -575,17 +589,20 @@ Return ONLY the JSON object, no other text."""
         
     except Exception as e:
         # Fallback prediction if Gemini fails
+        print(f"Gemini prediction failed: {e}")
         return {
             "prediction": 1,
             "risk_level": "High Risk",
             "confidence": 0.5,
             "recommendations": [
-                "⚠️ Could not complete full analysis with available data",
+                "⚠️ Analysis incomplete - taking precautionary approach",
                 "💧 Increase water intake to 2-3 liters per day as a precaution",
-                "🏥 Consult a healthcare professional for complete urine analysis",
+                "🏥 Please consult a healthcare professional for complete urine analysis",
                 "📊 Consider getting a complete metabolic panel test",
-                "🔬 Request a 24-hour urine collection test for accurate diagnosis"
+                "🔬 Request a 24-hour urine collection test for accurate diagnosis",
+                "📸 Try uploading a clearer image with better lighting for more accurate analysis"
             ],
+            "analysis_notes": "Unable to complete full AI analysis. Recommending medical consultation for safety.",
             "timestamp": datetime.now().isoformat()
         }
 
@@ -635,8 +652,11 @@ Respond with ONLY one letter: A, B, or C"""
             validation_response = gemini_generate(validation_prompt, img)
             image_type = validation_response.text.strip().upper()
             
-            # If it's a medical scan, reject it
-            if 'A' in image_type:
+            # Check the first character or look for the letter in the response
+            first_char = image_type[0] if image_type else 'C'
+            
+            # If it's definitely a medical scan, reject it
+            if first_char == 'A' or (image_type.startswith('A)') or image_type.startswith('A.')):
                 return {
                     "success": False,
                     "parameters": None,
@@ -646,16 +666,8 @@ Respond with ONLY one letter: A, B, or C"""
                     "prediction": None
                 }
             
-            # If it's neither urine strip nor medical scan
-            if 'C' in image_type:
-                return {
-                    "success": False,
-                    "parameters": None,
-                    "message": "❌ Invalid image type. Please upload a urine test strip image showing color patches for analysis.",
-                    "confidence": None,
-                    "missing_parameters": None,
-                    "prediction": None
-                }
+            # For urine strips (B) or uncertain (C), continue with extraction
+            # We'll let the OCR process try to extract parameters
         except Exception as e:
             # If validation fails, continue with extraction (don't block valid images)
             print(f"Warning: Image validation failed: {e}")
@@ -772,10 +784,19 @@ Do not include any other text, just the JSON object."""
             try:
                 gemini_prediction = predict_with_gemini(img, extracted_params)
                 
+                # Create detailed message with AI analysis
+                analysis_note = gemini_prediction.get('analysis_notes', '')
+                message_parts = [
+                    f"⚠️ Some parameters could not be extracted ({', '.join(missing)}).",
+                    f"🤖 AI Analysis: {analysis_note}" if analysis_note else "",
+                    "📊 Prediction completed using comprehensive AI image analysis."
+                ]
+                detailed_message = " ".join([p for p in message_parts if p])
+                
                 return {
                     "success": True,
                     "parameters": extracted_params,
-                    "message": f"⚠️ Some parameters missing ({', '.join(missing)}). Prediction completed based on available data.",
+                    "message": detailed_message,
                     "confidence": gemini_prediction.get('confidence', 0.7),
                     "missing_parameters": missing,
                     "prediction": gemini_prediction,
