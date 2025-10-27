@@ -21,7 +21,7 @@ interface PredictionResult {
   risk_level: string;
   confidence?: number;
   recommendations: string[];
-  timestamp?: string;
+  timestamp: string;
 }
 
 interface HistoryEntry {
@@ -66,33 +66,21 @@ const kidneyFacts = [
 
 export default function PredictPage() {
   const [form, setForm] = useState<UrineData>({
-    gravity: null,
-    ph: null,
-    osmo: null,
-    cond: null,
-    urea: null,
-    calc: null,
+    gravity: "" as any,
+    ph: "" as any,
+    osmo: "" as any,
+    cond: "" as any,
+    urea: "" as any,
+    calc: "" as any,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PredictionResult | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [factIdx, setFactIdx] = useState(0);
-  
-  // Image-related states
-  const [imageLoading, setImageLoading] = useState(false);
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [urineStripResult, setUrineStripResult] = useState<PredictionResult | null>(null);
-  
-  // CT/X-Ray scan prediction states
-  const [ctImage, setCtImage] = useState<File | null>(null);
-  const [ctPreview, setCtPreview] = useState<string | null>(null);
-  const [ctLoading, setCtLoading] = useState(false);
-  const [ctResult, setCtResult] = useState<any | null>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value === "" ? null : Number(e.target.value);
-    setForm({ ...form, [e.target.name]: value });
+    setForm({ ...form, [e.target.name]: e.target.value === "" ? "" : Number(e.target.value) });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -102,18 +90,28 @@ export default function PredictPage() {
     setResult(null);
     
     try {
+      // Convert all form values to numbers before sending
+      const numericData: UrineData = {
+        gravity: Number(form.gravity),
+        ph: Number(form.ph),
+        osmo: Number(form.osmo),
+        cond: Number(form.cond),
+        urea: Number(form.urea),
+        calc: Number(form.calc),
+      };
+      
       // Validate that all values are valid numbers
-      const hasInvalidData = Object.values(form).some(val => val === null || isNaN(val as number));
+      const hasInvalidData = Object.values(numericData).some(val => val === null || isNaN(val as number));
       if (hasInvalidData) {
         setError("Please enter valid numbers for all fields");
         setLoading(false);
         return;
       }
       
-      const res = await predictKidneyStone(form);
+      const res = await predictKidneyStone(numericData);
       setResult(res);
       const entry: HistoryEntry = { 
-        form: form, 
+        form: numericData, 
         result: res, 
         time: new Date().toLocaleString() 
       };
@@ -126,14 +124,14 @@ export default function PredictPage() {
   };
 
   const handleReset = () => {
-    setForm({ gravity: null, ph: null, osmo: null, cond: null, urea: null, calc: null });
+    setForm({ gravity: "" as any, ph: "" as any, osmo: "" as any, cond: "" as any, urea: "" as any, calc: "" as any });
     setResult(null);
     setError(null);
   };
 
   const handleResetUrineImage = () => {
     setSelectedImage(null);
-    setForm({ gravity: null, ph: null, osmo: null, cond: null, urea: null, calc: null });
+    setForm({ gravity: "" as any, ph: "" as any, osmo: "" as any, cond: "" as any, urea: "" as any, calc: "" as any });
     setResult(null);
     setError(null);
     setImageLoading(false);
@@ -166,10 +164,14 @@ export default function PredictPage() {
     return () => clearInterval(interval);
   }, []);
 
+  const [imageLoading, setImageLoading] = useState(false);
+
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [urineStripResult, setUrineStripResult] = useState<any | null>(null);
+  
   const handleImageUpload = async (file: File) => {
     setImageLoading(true);
     setError(null);
-    setUrineStripResult(null);
     
     try {
       const reader = new FileReader();
@@ -190,35 +192,54 @@ export default function PredictPage() {
     
     setImageLoading(true);
     setError(null);
+    setResult(null);
     setUrineStripResult(null);
     
     try {
-      const payload = {
-        image: selectedImage 
-      };
-
-      const apiResponse = await axios.post("/api/predict/urine-strip", payload, {
+      // Convert base64 to blob
+      const response = await fetch(selectedImage);
+      const blob = await response.blob();
+      const file = new File([blob], "urine-strip.jpg", { type: "image/jpeg" });
+      
+      const formData = new FormData();
+      formData.append("file", file);
+      
+      const apiResponse = await axios.post("/api/predict/urine-strip", formData, {
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "multipart/form-data"
         }
       });
 
-      const data: PredictionResult = apiResponse.data;
+      const data = apiResponse.data;
       
-      if (data && data.risk_level && data.recommendations) {
+      if (data.success && data.parameters && data.prediction) {
+        // All parameters extracted and prediction made
         setUrineStripResult(data);
+        setForm(data.parameters);
         setError(null);
+      } else if (data.parameters) {
+        // Some parameters extracted but not all
+        setUrineStripResult(data);
+        setForm(data.parameters);
+        setError(data.message);
       } else {
-        setError("Could not extract prediction from image. Please try manual entry.");
+        // No parameters extracted
+        setError(data.message || "Could not extract parameters from image. Please use manual entry.");
         setUrineStripResult(null);
       }
     } catch (err: any) {
-      setError(err?.response?.data?.msg || "Failed to analyze image. Please try manual entry.");
+      setError(err?.response?.data?.message || err?.response?.data?.detail || "Failed to analyze image. Please try manual entry.");
       setUrineStripResult(null);
     } finally {
       setImageLoading(false);
     }
   };
+
+  // CT/X-Ray scan prediction states and handlers
+  const [ctImage, setCtImage] = useState<File | null>(null);
+  const [ctPreview, setCtPreview] = useState<string | null>(null);
+  const [ctLoading, setCtLoading] = useState(false);
+  const [ctResult, setCtResult] = useState<any | null>(null);
 
   const handleCtImageUpload = async (file: File) => {
     setCtImage(file);
@@ -226,6 +247,7 @@ export default function PredictPage() {
     setCtResult(null);
     setError(null);
     
+    // Create preview
     const reader = new FileReader();
     reader.onloadend = () => {
       setCtPreview(reader.result as string);
@@ -372,7 +394,7 @@ export default function PredictPage() {
                       value="image"
                       className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 data-[state=active]:text-blue-600 data-[state=active]:border-b-2 data-[state=active]:border-blue-600"
                     >
-                      📸 Urine Test Image
+                      � Urine Test Image
                     </Tabs.Trigger>
                     <Tabs.Trigger
                       value="ct-scan"
@@ -385,7 +407,7 @@ export default function PredictPage() {
                   <Tabs.Content value="manual" className="space-y-6">
                     <form onSubmit={handleSubmit} className="space-y-8">
                       <div className="grid sm:grid-cols-2 gap-6">
-                        {(Object.entries(form) as [keyof UrineData, number | null][]).map(([key, value], index) => (
+                        {(Object.entries(form) as [keyof UrineData, number][]).map(([key, value], index) => (
                           <motion.div 
                             key={key}
                             initial={{ opacity: 0, y: 20 }}
@@ -410,6 +432,7 @@ export default function PredictPage() {
                               onChange={handleChange}
                               step="any"
                               required
+                              suppressHydrationWarning
                               className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none"
                               placeholder={`Enter ${parameterInfo[key].label.toLowerCase()}`}
                             />
@@ -424,6 +447,7 @@ export default function PredictPage() {
                           type="submit" 
                           className="flex-1 py-3.5 text-base font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed" 
                           disabled={loading}
+                          suppressHydrationWarning
                         >
                           {loading ? (
                             <span className="flex items-center gap-3 justify-center">
@@ -447,13 +471,14 @@ export default function PredictPage() {
                           type="button" 
                           className="px-8 py-3.5 border-2 border-slate-300 rounded-lg hover:bg-slate-50 transition-all font-medium text-slate-700" 
                           onClick={handleReset}
+                          suppressHydrationWarning
                         >
                           Reset
                         </motion.button>
                       </div>
                     </form>
                     
-                    {/* Manual Entry Results */}
+                    {/* Manual Entry Results - Only show in this tab */}
                     <AnimatePresence mode="wait">
                       {result !== null && (
                         <motion.div
@@ -512,7 +537,7 @@ export default function PredictPage() {
                       )}
                     </AnimatePresence>
                     
-                    {/* Recent Predictions */}
+                    {/* Recent Predictions - Only show in Manual Entry tab */}
                     {history.length > 0 && (
                       <motion.div
                         initial={{ opacity: 0, y: 20 }}
@@ -529,12 +554,14 @@ export default function PredictPage() {
                             <button 
                               className="text-sm text-green-600 hover:text-green-700 font-medium px-3 py-1 border border-green-300 rounded-lg hover:bg-green-50 transition-colors" 
                               onClick={exportResults}
+                              suppressHydrationWarning
                             >
                               📥 Export
                             </button>
                             <button 
                               className="text-sm text-red-600 hover:text-red-700 font-medium px-3 py-1 border border-red-300 rounded-lg hover:bg-red-50 transition-colors" 
                               onClick={() => setHistory([])}
+                              suppressHydrationWarning
                             >
                               🗑️ Clear
                             </button>
@@ -561,7 +588,7 @@ export default function PredictPage() {
                                 </span>
                               </div>
                               <div className="grid grid-cols-3 gap-2 text-xs">
-                                {(Object.entries(h.form) as [keyof UrineData, number | null][]).map(([k, v]) => (
+                                {(Object.entries(h.form) as [keyof UrineData, number][]).map(([k, v]) => (
                                   <div key={k} className="bg-slate-50 px-2 py-1 rounded">
                                     <span className="font-medium text-slate-600">{parameterInfo[k].label}:</span>
                                     <span className="ml-1 text-slate-800">{v}</span>
@@ -584,7 +611,7 @@ export default function PredictPage() {
                       </div>
                       
                       {!urineStripResult ? (
-                        <div>
+                        <>
                           <ImageUpload onImageUpload={handleImageUpload} isLoading={imageLoading} />
                           
                           {selectedImage && (
@@ -599,6 +626,7 @@ export default function PredictPage() {
                                 onClick={handleAnalyzeImage}
                                 className="py-3 px-8 text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                 disabled={imageLoading}
+                                suppressHydrationWarning
                               >
                                 {imageLoading ? (
                                   <span className="flex items-center gap-3 justify-center">
@@ -622,6 +650,7 @@ export default function PredictPage() {
                                 whileTap={{ scale: 0.98 }}
                                 onClick={handleResetUrineImage}
                                 className="py-3 px-6 text-sm font-semibold border-2 border-slate-300 rounded-lg hover:bg-slate-50 transition-all text-slate-700"
+                                suppressHydrationWarning
                               >
                                 <span className="flex items-center gap-2">
                                   <span>🔄</span>
@@ -630,92 +659,90 @@ export default function PredictPage() {
                               </motion.button>
                             </motion.div>
                           )}
-                        </div>
+                        </>
                       ) : (
-                        <div>
+                        <>
+                          {/* Results Display - Simple like Manual Entry */}
                           <motion.div
                             initial={{ opacity: 0, y: 20 }}
                             animate={{ opacity: 1, y: 0 }}
                             className="space-y-6"
                           >
-                            {selectedImage && (
-                              <div className="mb-6">
-                                <img 
-                                  src={selectedImage} 
-                                  alt="Selected urine strip"
-                                  className="max-w-md mx-auto rounded-lg shadow-lg"
-                                />
-                              </div>
-                            )}
-                            
-                            <motion.div
-                              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                              animate={{ opacity: 1, scale: 1, y: 0 }}
-                              transition={{ type: "spring", stiffness: 200 }}
-                              className={`p-8 rounded-xl shadow-xl ${
-                                urineStripResult.prediction === 1 
-                                  ? "bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200" 
-                                  : "bg-gradient-to-br from-green-50 to-emerald-100 border-2 border-green-200"
-                              }`}
-                            >
-                              <div className="flex flex-col items-center text-center">
-                                <motion.div 
-                                  initial={{ scale: 0 }}
-                                  animate={{ scale: 1 }}
-                                  transition={{ type: "spring", stiffness: 200, delay: 0.1 }}
-                                  className="text-6xl mb-4"
+                            {/* Prediction Result */}
+                            {urineStripResult.success && urineStripResult.prediction && (
+                              <>
+                                <motion.div
+                                  initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                                  transition={{ type: "spring", stiffness: 200 }}
+                                  className={`p-8 rounded-xl shadow-xl ${
+                                    urineStripResult.prediction.prediction === 1 
+                                      ? "bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200" 
+                                      : "bg-gradient-to-br from-green-50 to-emerald-100 border-2 border-green-200"
+                                  }`}
                                 >
-                                  {urineStripResult.prediction === 1 ? "⚠️" : "✅"}
+                                  <div className="flex flex-col items-center text-center">
+                                    <motion.div 
+                                      initial={{ scale: 0 }}
+                                      animate={{ scale: 1 }}
+                                      transition={{ type: "spring", stiffness: 200, delay: 0.1 }}
+                                      className="text-6xl mb-4"
+                                    >
+                                      {urineStripResult.prediction.prediction === 1 ? "⚠️" : "✅"}
+                                    </motion.div>
+                                    <h3 className={`text-3xl font-bold mb-3 ${
+                                      urineStripResult.prediction.prediction === 1 ? "text-red-700" : "text-green-700"
+                                    }`}>
+                                      {urineStripResult.prediction.risk_level}
+                                    </h3>
+                                    {urineStripResult.prediction.confidence && (
+                                      <p className="text-base text-slate-600 mb-6">
+                                        Confidence: {(urineStripResult.prediction.confidence * 100).toFixed(1)}%
+                                      </p>
+                                    )}
+                                    
+                                    <div className="w-full mt-6 p-6 bg-white/60 backdrop-blur-sm rounded-xl shadow-inner text-left">
+                                      <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                        <span className="text-xl">📋</span>
+                                        <span>Recommendations</span>
+                                      </h4>
+                                      <ul className="space-y-3">
+                                        {urineStripResult.prediction.recommendations.map((rec: string, idx: number) => (
+                                          <motion.li 
+                                            key={idx}
+                                            initial={{ opacity: 0, x: -10 }}
+                                            animate={{ opacity: 1, x: 0 }}
+                                            transition={{ delay: 0.2 + idx * 0.1 }}
+                                            className="text-sm text-slate-700 flex items-start gap-3"
+                                          >
+                                            <span className="text-blue-600 font-bold mt-0.5">•</span>
+                                            <span className="flex-1">{rec}</span>
+                                          </motion.li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  </div>
                                 </motion.div>
-                                <h3 className={`text-3xl font-bold mb-3 ${
-                                  urineStripResult.prediction === 1 ? "text-red-700" : "text-green-700"
-                                }`}>
-                                  {urineStripResult.risk_level}
-                                </h3>
-                                {urineStripResult.confidence && (
-                                  <p className="text-base text-slate-600 mb-6">
-                                    Confidence: {(urineStripResult.confidence * 100).toFixed(1)}%
-                                  </p>
-                                )}
                                 
-                                <div className="w-full mt-6 p-6 bg-white/60 backdrop-blur-sm rounded-xl shadow-inner text-left">
-                                  <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                                    <span className="text-xl">📋</span>
-                                    <span>Recommendations</span>
-                                  </h4>
-                                  <ul className="space-y-3">
-                                    {urineStripResult.recommendations.map((rec: string, idx: number) => (
-                                      <motion.li 
-                                        key={idx}
-                                        initial={{ opacity: 0, x: -10 }}
-                                        animate={{ opacity: 1, x: 0 }}
-                                        transition={{ delay: 0.2 + idx * 0.1 }}
-                                        className="text-sm text-slate-700 flex items-start gap-3"
-                                      >
-                                        <span className="text-blue-600 font-bold mt-0.5">•</span>
-                                        <span className="flex-1">{rec}</span>
-                                      </motion.li>
-                                    ))}
-                                  </ul>
+                                {/* Test Another Button - Only show when there are results */}
+                                <div className="flex justify-center pt-4">
+                                  <motion.button
+                                    whileHover={{ scale: 1.02 }}
+                                    whileTap={{ scale: 0.98 }}
+                                    onClick={handleResetUrineImage}
+                                    className="py-3 px-8 text-sm font-semibold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all"
+                                    suppressHydrationWarning
+                                  >
+                                    <span className="flex items-center gap-2">
+                                      <span>🔄</span>
+                                      <span>Test Another Strip</span>
+                                    </span>
+                                  </motion.button>
                                 </div>
-                              </div>
-                            </motion.div>
-                            
-                            <div className="flex justify-center pt-4">
-                              <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={handleResetUrineImage}
-                                className="py-3 px-8 text-sm font-semibold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all"
-                              >
-                                <span className="flex items-center gap-2">
-                                  <span>🔄</span>
-                                  <span>Test Another Strip</span>
-                                </span>
-                              </motion.button>
-                            </div>
+                              </>
+                            )}
                           </motion.div>
-                        </div>
+                        </>
                       )}
                     </div>
                   </Tabs.Content>
@@ -744,6 +771,7 @@ export default function PredictPage() {
                                 onClick={handleCtImagePredict}
                                 className="py-3 px-8 text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                 disabled={ctLoading}
+                                suppressHydrationWarning
                               >
                                 {ctLoading ? (
                                   <span className="flex items-center gap-3 justify-center">
@@ -767,6 +795,7 @@ export default function PredictPage() {
                                 whileTap={{ scale: 0.98 }}
                                 onClick={handleResetCtScan}
                                 className="py-3 px-6 text-sm font-semibold border-2 border-slate-300 rounded-lg hover:bg-slate-50 transition-all text-slate-700"
+                                suppressHydrationWarning
                               >
                                 <span className="flex items-center gap-2">
                                   <span>🔄</span>
@@ -778,12 +807,15 @@ export default function PredictPage() {
                         </>
                       ) : (
                         <>
+                          {/* Result Display */}
                           <motion.div
                             initial={{ opacity: 0, y: 20 }}
                             animate={{ opacity: 1, y: 0 }}
                             className="space-y-6"
                           >
+                            {/* Results Card with Image */}
                             <div className="bg-white border-2 border-blue-200 rounded-2xl shadow-2xl overflow-hidden">
+                              {/* Image Preview at Top */}
                               <div className="bg-gradient-to-br from-slate-50 to-blue-50 p-8 border-b-2 border-blue-100">
                                 <div className="flex justify-center">
                                   <img 
@@ -794,6 +826,7 @@ export default function PredictPage() {
                                 </div>
                               </div>
                               
+                              {/* Results Content */}
                               <div className="p-8">
                                 <div className="flex items-center gap-4 mb-6">
                                   <div className={`w-16 h-16 rounded-full flex items-center justify-center text-3xl shadow-lg ${
@@ -860,12 +893,14 @@ export default function PredictPage() {
                               </div>
                             </div>
                             
+                            {/* Test Another Button */}
                             <div className="flex justify-center pt-4">
                               <motion.button
                                 whileHover={{ scale: 1.02 }}
                                 whileTap={{ scale: 0.98 }}
                                 onClick={handleResetCtScan}
                                 className="py-3 px-8 text-sm font-semibold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-lg shadow-lg hover:shadow-xl transition-all"
+                                suppressHydrationWarning
                               >
                                 <span className="flex items-center gap-2">
                                   <span>🔄</span>
