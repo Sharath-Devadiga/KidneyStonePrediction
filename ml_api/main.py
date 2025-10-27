@@ -423,29 +423,46 @@ async def predict_image(file: UploadFile = File(...)):
             try:
                 img_pil = Image.open(io.BytesIO(image_data))
                 
-                validation_prompt = """Look at this image and identify what type of image it is.
-                
-Is this:
-A) A medical scan (CT scan, X-ray, ultrasound, MRI) showing internal body parts/organs
-B) A urine test strip (colorful strip with multiple test pads)
-C) Something else
+                validation_prompt = """Analyze this image carefully and determine what it shows.
 
-Respond with ONLY one letter: A, B, or C"""
+Is this:
+A) A MEDICAL SCAN - CT scan, X-ray, ultrasound, or MRI showing internal body parts, bones, or organs in grayscale
+B) A URINE TEST STRIP - Physical colorful strip with test pads
+C) A DOCUMENT/REPORT - Paper, lab report, test results with printed text and values
+D) Something else
+
+Respond with ONLY ONE LETTER: A, B, C, or D"""
 
                 validation_response = gemini_generate(validation_prompt, img_pil)
                 image_type = validation_response.text.strip().upper()
                 
-                # Check the first character for more accurate detection
-                first_char = image_type[0] if image_type else 'A'
+                print(f"CT/X-ray validation result: {image_type}")
                 
-                # If it's definitely a urine test strip, reject it
-                if first_char == 'B' or image_type.startswith('B)') or image_type.startswith('B.'):
+                # Get first character for checking
+                first_char = image_type[0] if image_type else 'D'
+                
+                # Reject urine test strips
+                if first_char == 'B':
                     raise HTTPException(
                         status_code=400, 
-                        detail="❌ Invalid image type. This appears to be a urine test strip. Please use the 'Urine Test Image' tab for urine strip analysis, or upload a CT/X-ray scan image here."
+                        detail="❌ Invalid image type. This appears to be a urine test strip. Please use the 'Urine Test Image' tab for urine strip analysis."
                     )
                 
-                # For medical scans (A) or uncertain (C), continue with prediction
+                # Reject documents/reports (THIS IS THE KEY FIX)
+                if first_char == 'C':
+                    raise HTTPException(
+                        status_code=400,
+                        detail="❌ Invalid image type. This appears to be a lab report or document. Please upload an actual CT scan or X-ray medical image (not a report)."
+                    )
+                
+                # Reject other non-medical images
+                if first_char == 'D':
+                    raise HTTPException(
+                        status_code=400,
+                        detail="❌ Invalid image type. Please upload a CT scan or X-ray image showing kidneys/internal organs."
+                    )
+                
+                # Only A (medical scans) continue to prediction
             except HTTPException:
                 raise
             except Exception as e:
